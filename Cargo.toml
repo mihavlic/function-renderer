@@ -5,4 +5,15 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[patch.'https://github.com/mihavlic/vulkan-bindings']
+pumice = { path = "./pumice" }
+
+[patch.'https://github.com/mihavlic/vulkan-engine']
+graph = { path = "../vulkan-engine" }
+
 [dependencies]
+pumice = {git = "https://github.com/mihavlic/vulkan-bindings.git", features = ["wrappers"]}
+graph = {git = "https://github.com/mihavlic/vulkan-engine.git"}
+winit = {version = "0.27.4", default-features = false, features = ["wayland", "x11"]}
+notify = "5.1.0"
+rustyline = "10.1.0"
