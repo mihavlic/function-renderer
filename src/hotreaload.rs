@@ -86,6 +86,10 @@ impl ShaderModules {
             let mut rl = Editor::<()>::new().unwrap();
             rl.load_history(&path);
 
+            if let Some(last) = rl.history().last() {
+                sender.send(AsyncEvent::StdinLine(last.to_owned()));
+            }
+
             let mut history_file = File::options().append(true).open(&path).unwrap();
 
             // we manually create the history file since we need to append an entry immediatelly after a line is read

@@ -1,4 +1,8 @@
-use std::{ffi::c_void, time::Instant};
+use std::{
+    ffi::c_void,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use graph::{
     graph::{
@@ -10,10 +14,13 @@ use graph::{
 };
 use pumice::{util::ObjectHandle, vk};
 
+use crate::ViewState;
+
 pub struct ComputePass {
     pub image: GraphImage,
     pub pipeline: object::ComputePipeline,
     pub time: Instant,
+    pub state: Arc<Mutex<ViewState>>,
 }
 
 impl CreatePass for ComputePass {
@@ -80,14 +87,18 @@ impl RenderPass for ComputePass {
             .finish(executor)
             .bind(vk::PipelineBindPoint::COMPUTE, pipeline_layout, executor);
 
+        let mut state = self.state.lock().unwrap();
+
         let data = PushConstantData {
             width: w,
             height: h,
-            offset_x: -(w as f32) / 2.0,
-            offset_y: -(h as f32) / 2.0,
-            scale: 1.0,
+            offset_x: state.x_shift,
+            offset_y: state.y_shift,
+            scale: state.zoom,
             time,
         };
+
+        drop(state);
 
         d.cmd_push_constants(
             cmd,

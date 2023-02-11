@@ -15,6 +15,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
 use std::{io, slice};
 
 use graph::device::reflection::ReflectedLayout;
@@ -31,7 +32,7 @@ use notify::event::{DataChange, ModifyKind};
 use notify::Watcher;
 use pumice::VulkanResult;
 use pumice::{util::ApiLoadConfig, vk};
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::window::WindowBuilder;
@@ -40,14 +41,19 @@ use write::{compile_glsl_to_spirv, make_density_function};
 use crate::pass::ComputePass;
 use crate::write::make_glsl_math;
 
+pub struct ViewState {
+    zoom: f32,
+    x_shift: f32,
+    y_shift: f32,
+}
+
 fn main() {
     unsafe {
         install_tracing_subscriber(None);
         let mut event_loop = EventLoop::new();
 
         let window = WindowBuilder::new()
-            .with_title("A fantastic window!")
-            .with_inner_size(winit::dpi::LogicalSize::new(128.0f32, 128.0f32))
+            .with_inner_size(winit::dpi::LogicalSize::new(512.0f32, 512.0f32))
             .with_always_on_top(true)
             .build(&event_loop)
             .unwrap();
@@ -58,8 +64,30 @@ fn main() {
         let mut modules = ShaderModules::new();
         let mut compiler = GraphCompiler::new();
 
-        let mut graph =
-            make_graph(&swapchain, queue, &mut modules, &mut compiler, &device).unwrap();
+        let state = Arc::new(Mutex::new(ViewState {
+            zoom: 1.0,
+            x_shift: 0.0,
+            y_shift: 0.0,
+        }));
+
+        let mut graph = make_graph(
+            &swapchain,
+            queue,
+            state.clone(),
+            &mut modules,
+            &mut compiler,
+            &device,
+        )
+        .unwrap();
+
+        let mut prev = std::time::Instant::now();
+        let mut up_pressed = false;
+        let mut down_pressed = false;
+        let mut left_pressed = false;
+        let mut right_pressed = false;
+        let mut w_pressed = false;
+        let mut s_pressed = false;
+        let mut r_pressed = false;
 
         event_loop.run(move |event, _, control_flow| {
             control_flow.set_poll();
@@ -76,13 +104,40 @@ fn main() {
                         };
                         swapchain.surface_resized(extent);
                     }
+                    WindowEvent::KeyboardInput {
+                        device_id,
+                        input,
+                        is_synthetic,
+                    } => {
+                        let mut lock = state.lock().unwrap();
+
+                        if let Some(a) = input.virtual_keycode {
+                            let pressed = input.state == ElementState::Pressed;
+                            match a {
+                                VirtualKeyCode::Up => up_pressed = pressed,
+                                VirtualKeyCode::Down => down_pressed = pressed,
+                                VirtualKeyCode::Left => left_pressed = pressed,
+                                VirtualKeyCode::Right => right_pressed = pressed,
+                                VirtualKeyCode::W => w_pressed = pressed,
+                                VirtualKeyCode::S => s_pressed = pressed,
+                                VirtualKeyCode::R => r_pressed = pressed,
+                                _ => {}
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 Event::MainEventsCleared => {
                     match modules.poll() {
                         hotreaload::PollResult::Recreate => {
-                            let result =
-                                make_graph(&swapchain, queue, &mut modules, &mut compiler, &device);
+                            let result = make_graph(
+                                &swapchain,
+                                queue,
+                                state.clone(),
+                                &mut modules,
+                                &mut compiler,
+                                &device,
+                            );
 
                             match result {
                                 Ok(ok) => graph = ok,
@@ -100,6 +155,45 @@ fn main() {
                     window.request_redraw();
                 }
                 Event::RedrawRequested(req) => {
+                    let dt = prev.elapsed().as_secs_f32().min(0.5);
+                    prev = std::time::Instant::now();
+
+                    let mut lock = state.lock().unwrap();
+                    let scale = 700.0 * lock.zoom * dt;
+
+                    if up_pressed {
+                        lock.y_shift += scale;
+                    }
+                    if down_pressed {
+                        lock.y_shift -= scale;
+                    }
+                    if left_pressed {
+                        lock.x_shift += scale;
+                    }
+                    if right_pressed {
+                        lock.x_shift -= scale;
+                    }
+                    if w_pressed {
+                        let f = 0.999f32.powf(dt.recip());
+                        lock.zoom *= f;
+                    }
+                    if s_pressed {
+                        let f = 0.999f32.powf(dt.recip());
+                        lock.zoom /= f;
+                    }
+                    if r_pressed {
+                        lock.zoom = 1.0;
+                        lock.x_shift = 0.0;
+                        lock.y_shift = 0.0;
+                    }
+
+                    lock.x_shift = lock.x_shift.round();
+                    lock.y_shift = lock.y_shift.round();
+
+                    lock.zoom = lock.zoom.clamp(0.001, 999.0);
+
+                    drop(lock);
+
                     let size = window.inner_size();
                     if !(window.is_visible() == Some(false) || size.width == 0 || size.height == 0)
                     {
@@ -107,6 +201,7 @@ fn main() {
                     }
                     device.idle_cleanup_poll();
                 }
+
                 _ => (),
             }
         });
@@ -116,6 +211,7 @@ fn main() {
 unsafe fn make_graph(
     swapchain: &object::Swapchain,
     queue: device::submission::Queue,
+    state: Arc<Mutex<ViewState>>,
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
     device: &device::OwnedDevice,
@@ -152,6 +248,7 @@ unsafe fn make_graph(
                 image: swapchain,
                 pipeline,
                 time: std::time::Instant::now(),
+                state,
             },
             "",
         );

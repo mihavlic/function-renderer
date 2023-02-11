@@ -18,9 +18,24 @@ float density(vec4 data);
 void main() {
     uvec2 global_id = gl_GlobalInvocationID.xy;
     if (global_id.x < size.width && global_id.y < size.height) {
-        vec2 pos = (vec2(global_id) + size.offset) * size.scale;
+        vec2 pos = vec2(global_id) * size.scale - size.offset;
 
         float d = density(vec4(pos, 0.0, size.time));
+
+        // float* out = buffer;
+        // float xf0 = x_shift - w*zoom*0.5;
+        // float xf;
+        // float yf = y_shift + h*zoom*0.5;
+        // float d = zoom;
+
+        // int i = 0;
+        // for (int y = 0; y < h_; y++) {
+        //     xf = xf0;
+        //     for (int x = 0; x < w_; x++) {
+        //         x_arr[i] = xf;
+        //         y_arr[i] = yf;
+        //     }
+        // }
 
         imageStore(pixel_out, ivec2(global_id.xy), vec4(d.xxx, 1.0));
     }
