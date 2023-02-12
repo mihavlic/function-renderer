@@ -2,7 +2,14 @@ use crate::parser::{
     self, array_eval, debug_ast, parse_expr, BinaryOperation, Expression, Lane, Parser,
 };
 use graph::device::read_spirv;
-use std::{error::Error, f32::consts::FRAC_PI_2, fmt::Write, fs::File, path::Path, process::Stdio};
+use std::{
+    error::Error,
+    f32::consts::FRAC_PI_2,
+    fmt::Write,
+    fs::File,
+    path::Path,
+    process::{ExitStatus, Stdio},
+};
 
 pub fn write_glsl(node: &Expression) -> String {
     let mut out = String::new();
@@ -134,15 +141,19 @@ pub fn make_density_function(expr: &str) -> String {
 pub fn compile_glsl_to_spirv(
     source_code: &str,
     temp_folder: &Path,
+    ending: &str,
 ) -> Result<Vec<u32>, Box<dyn Error>> {
-    let source = temp_folder.join("source.comp");
+    let file = format!("source.{ending}");
+
+    let source = temp_folder.join(&file);
     std::fs::write(&source, source_code)?;
 
     let child = std::process::Command::new("glslangValidator")
-        .arg("-V")
+        .arg("--target-env")
+        .arg("vulkan1.1")
         .arg("-o")
         .arg("compiled.spv")
-        .arg("source.comp")
+        .arg(&file)
         .current_dir(temp_folder)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -151,8 +162,10 @@ pub fn compile_glsl_to_spirv(
         .expect("Failed to run glslangValidator");
 
     let output = child.wait_with_output()?;
-    if !output.stderr.is_empty() {
-        let err = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        let mut err = String::from_utf8_lossy(&output.stderr).to_string();
+        err += &String::from_utf8_lossy(&output.stdout);
         Err(err)?;
     }
 

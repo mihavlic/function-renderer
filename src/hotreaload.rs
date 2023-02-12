@@ -6,6 +6,7 @@ use std::error::Error;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::{Cursor, Seek};
+use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -33,7 +34,6 @@ use winit::event_loop::EventLoop;
 use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::window::WindowBuilder;
 
-use crate::pass::ComputePass;
 use crate::write::make_glsl_math;
 
 pub struct ModuleEntry {
@@ -201,7 +201,12 @@ impl ShaderModules {
                     source.push_str(&self.eval_fn);
                 }
 
-                let spirv = compile_glsl_to_spirv(&source, rust_target_dir().as_ref().as_ref())?;
+                let spirv = compile_glsl_to_spirv(
+                    &source,
+                    rust_target_dir().as_ref().as_ref(),
+                    std::str::from_utf8(path.extension().unwrap().as_bytes()).unwrap(),
+                )?;
+
                 let module = device.create_shader_module_spirv(&spirv)?;
 
                 let value = Rc::new(ModuleEntry {

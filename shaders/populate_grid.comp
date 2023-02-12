@@ -1,0 +1,24 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+layout(push_constant, scalar) uniform PushConstant {
+	uvec3 size;
+    vec3 offset;
+    float scale;
+    float time;
+} push;
+
+layout (set = 0, binding = 0, r16) uniform writeonly image3D pixel_out;
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+float density(vec4 data);
+
+void main() {
+    uvec3 global_id = gl_GlobalInvocationID.xyz;    
+    vec3 pos = vec3(global_id) * push.scale - push.offset;
+
+    float d = density(vec4(pos, push.time));
+
+    imageStore(pixel_out, ivec3(global_id.xyz), vec4(d));
+}

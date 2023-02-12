@@ -1,0 +1,86 @@
+#version 450
+#extension GL_EXT_scalar_block_layout : enable
+
+layout(push_constant, scalar) uniform PushConstant { 
+    float time;
+} push;
+layout (set = 0, binding = 0, r16) uniform readonly image3D function_values;
+layout (set = 0, binding = 1, rgba8) uniform writeonly image3D intersections;
+
+layout(local_size_x = 4 * 3, local_size_y = 4, local_size_z = 4) in;
+
+float density(vec4 data);
+
+// compute the gradient of the function using finite differences
+vec3 calculate_gradient(vec3 pos) {
+    const float delta = 0.01;
+
+    float origin = density(vec4(pos, push.time));
+    
+    float x = pos.x;
+    float y = pos.y;
+    float z = pos.z;
+    float t = push.time;
+
+    float dx = (density(vec4(x + delta, y, z, t)) - origin) / delta;
+    float dy = (density(vec4(x, y + delta, z, t)) - origin) / delta;
+    float dz = (density(vec4(x, y, z + delta, t)) - origin) / delta;
+
+    return vec3(dx, dy, dz);
+}
+
+const uvec3[] axes = {
+    {1,0,0},
+    {0,1,0},
+    {0,0,1}
+};
+
+void main() {
+    uvec3 global_id = gl_GlobalInvocationID.xyz;    
+
+    uint  axis_index = global_id.x % 3;
+    uvec3 axis = axes[axis_index];
+    uvec3 pos = uvec3(global_id.x / 3, global_id.yz);
+
+    float p1 = imageLoad(function_values, ivec3(pos)).x;
+    float p2 = imageLoad(function_values, ivec3(pos + axis)).x;
+
+    // early exit if the sign is the same
+    if ((p1 >= 0) == (p2 >= 0)) {
+        return;
+    }
+
+    // we construct a line equation and intersect it with the axis
+    //
+    //    |--__
+    //    |    --__          y ^ 
+    // p1 |        | p2        |
+    //    |________|           |--> x
+    //
+    // y = kx + q
+    //
+    // p1 = k*0 + q  -> q = p1
+    // p2 = k*1 + q  -> k = p2 - q
+    //
+    // y = (p2 - p1)x + p1
+    // now intersect this line with the x axis (y = 0)
+    // x = p1 / (p1 - p2)
+
+    float x = p1 / (p1 - p2);
+    vec3 normal = vec3(0.0);
+
+    // if the intersection lies outside the range <0, 1.0> we force it to 0.0, which is specially regarded as empty
+    if (x < 0.0 || 1.0 < x) {
+        x = 0.0;
+        vec3 worldspace_intersection = vec3(pos) + vec3(axis) * x;
+        vec3 gradient = calculate_gradient(worldspace_intersection);
+        normal = normalize(gradient);
+    } else {
+        float epsilon = 1.0 / 256.0;
+        // the value of 0.0 is reserved for no intersection, so we nudge it to the smallest non-zero value
+        x = max(x, epsilon);
+    }
+
+    uvec3 index = uvec3(pos.x + axis_index * 64, pos.xy);
+    imageStore(intersections, ivec3(index), vec4(normal, x));
+}
