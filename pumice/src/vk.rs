@@ -15,6 +15,8 @@ pub use crate::extensions::ext_metal_surface::*;
 #[doc(no_inline)]
 pub use crate::extensions::ext_scalar_block_layout::*;
 #[doc(no_inline)]
+pub use crate::extensions::ext_shader_subgroup_ballot::*;
+#[doc(no_inline)]
 pub use crate::extensions::fuchsia_imagepipe_surface::*;
 #[doc(no_inline)]
 pub use crate::extensions::ggp_stream_descriptor_surface::*;

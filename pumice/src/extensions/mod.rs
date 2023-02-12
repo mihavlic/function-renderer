@@ -5,6 +5,7 @@ pub mod ext_directfb_surface;
 pub mod ext_headless_surface;
 pub mod ext_metal_surface;
 pub mod ext_scalar_block_layout;
+pub mod ext_shader_subgroup_ballot;
 pub mod fuchsia_imagepipe_surface;
 pub mod ggp_stream_descriptor_surface;
 pub mod khr_android_surface;

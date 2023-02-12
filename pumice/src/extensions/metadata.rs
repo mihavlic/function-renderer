@@ -52,6 +52,12 @@ pub const EXTENSION_METADATA: &[ExtensionMetadata] = &[
         requires_extensions: &[crate::cstr!("VK_KHR_get_physical_device_properties2")],
     },
     ExtensionMetadata {
+        name: crate::cstr!("VK_EXT_shader_subgroup_ballot"),
+        instance: false,
+        core_version: crate::vk10::API_VERSION_1_0,
+        requires_extensions: &[],
+    },
+    ExtensionMetadata {
         name: crate::cstr!("VK_FUCHSIA_imagepipe_surface"),
         instance: true,
         core_version: crate::vk10::API_VERSION_1_0,
