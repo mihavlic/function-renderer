@@ -16,12 +16,6 @@ pub fn get_metadata(name: &CStr) -> Option<&'static ExtensionMetadata> {
 }
 pub const EXTENSION_METADATA: &[ExtensionMetadata] = &[
     ExtensionMetadata {
-        name: crate::cstr!("VK_EXT_debug_report"),
-        instance: true,
-        core_version: crate::vk10::API_VERSION_1_0,
-        requires_extensions: &[],
-    },
-    ExtensionMetadata {
         name: crate::cstr!("VK_EXT_debug_utils"),
         instance: true,
         core_version: crate::vk10::API_VERSION_1_0,
@@ -116,6 +110,12 @@ pub const EXTENSION_METADATA: &[ExtensionMetadata] = &[
         instance: false,
         core_version: crate::vk10::API_VERSION_1_0,
         requires_extensions: &[crate::cstr!("VK_KHR_get_physical_device_properties2")],
+    },
+    ExtensionMetadata {
+        name: crate::cstr!("VK_KHR_shader_non_semantic_info"),
+        instance: false,
+        core_version: crate::vk10::API_VERSION_1_0,
+        requires_extensions: &[],
     },
     ExtensionMetadata {
         name: crate::cstr!("VK_KHR_surface"),

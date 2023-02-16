@@ -17,8 +17,6 @@ use graph::{
 };
 use pumice::{util::ObjectHandle, vk};
 
-use crate::ViewState;
-
 pub struct LambdaPass<
     C: FnMut(&mut GraphPassBuilder) + Send + 'static,
     F: FnMut(&GraphExecutor, &Device) + Send + 'static,

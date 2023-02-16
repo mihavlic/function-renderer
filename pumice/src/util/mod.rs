@@ -5,7 +5,7 @@ mod impl_macros;
 mod pnext;
 mod stage;
 
-pub use {access::*, config::*, impl_macros::*, pnext::*, stage::*};
+pub use {access::*, config::*, format::*, impl_macros::*, pnext::*, stage::*};
 
 #[macro_export]
 macro_rules! cstr {

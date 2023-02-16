@@ -42,11 +42,24 @@ void main() {
     uvec3 axis = axes[axis_index];
     uvec3 pos = uvec3(global_id.x / 3, global_id.yz);
 
+    uvec3 pos2 = pos + axis;
+
+    uvec3 index = global_id;
+    // uvec3 index = uvec3(pos.x + axis_index * 64, pos.yz);
+
+    if (pos2.x > (3 * 64 - 1) || pos2.y > 63 || pos2.z > 63) {
+        // TODO just clear the image before dispatch
+        imageStore(intersections, ivec3(index), vec4(0.0));
+        return;
+    }
+
     float p1 = imageLoad(function_values, ivec3(pos)).x;
-    float p2 = imageLoad(function_values, ivec3(pos + axis)).x;
+    float p2 = imageLoad(function_values, ivec3(pos2)).x;
 
     // early exit if the sign is the same
     if ((p1 >= 0) == (p2 >= 0)) {
+        // TODO just clear the image before dispatch
+        imageStore(intersections, ivec3(index), vec4(0.0));
         return;
     }
 
@@ -72,15 +85,15 @@ void main() {
     // if the intersection lies outside the range <0, 1.0> we force it to 0.0, which is specially regarded as empty
     if (x < 0.0 || 1.0 < x) {
         x = 0.0;
+    } else {
         vec3 worldspace_intersection = vec3(pos) + vec3(axis) * x;
         vec3 gradient = calculate_gradient(worldspace_intersection);
         normal = normalize(gradient);
-    } else {
-        float epsilon = 1.0 / 256.0;
+
         // the value of 0.0 is reserved for no intersection, so we nudge it to the smallest non-zero value
+        float epsilon = 1.0 / 256.0;
         x = max(x, epsilon);
     }
 
-    uvec3 index = uvec3(pos.x + axis_index * 64, pos.xy);
     imageStore(intersections, ivec3(index), vec4(normal, x));
 }

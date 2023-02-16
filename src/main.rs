@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+mod arcball;
 mod hotreaload;
 mod mesh_pass;
 mod parser;
@@ -11,15 +12,20 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::env::current_dir;
 use std::error::Error;
+use std::f32::consts::FRAC_PI_2;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::{io, slice};
 
+use arcball::ArcballCamera;
+use dolly::prelude::{Arm, Smooth, YawPitch};
+use dolly::rig::CameraRig;
+use glam::{Vec2, Vec3};
 use graph::device::reflection::ReflectedLayout;
 use graph::device::{self, read_spirv, Device, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::GraphCompiler;
@@ -33,25 +39,22 @@ use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma::{self};
 use hotreaload::ShaderModules;
+use mesh_pass::ArcBallAngles;
 use notify::event::{DataChange, ModifyKind};
 use notify::Watcher;
 use pass::LambdaPass;
 use pumice::util::ObjectHandle;
 use pumice::VulkanResult;
 use pumice::{util::ApiLoadConfig, vk};
-use winit::event::{ElementState, Event, VirtualKeyCode, WindowEvent};
+use winit::event::{
+    DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
+};
 use winit::event_loop::EventLoop;
 use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::window::WindowBuilder;
 use write::{compile_glsl_to_spirv, make_density_function};
 
 use crate::write::make_glsl_math;
-
-pub struct ViewState {
-    zoom: f32,
-    x_shift: f32,
-    y_shift: f32,
-}
 
 fn main() {
     unsafe {
@@ -70,11 +73,12 @@ fn main() {
         let mut modules = ShaderModules::new();
         let mut compiler = GraphCompiler::new();
 
-        let state = Arc::new(Mutex::new(ViewState {
-            zoom: 1.0,
-            x_shift: 0.0,
-            y_shift: 0.0,
-        }));
+        let state = Arc::new(Mutex::new(ArcballCamera::new(
+            Vec3::splat(32.0),
+            1.0,
+            40.0,
+            Vec2::new(512.0, 512.0),
+        )));
 
         let mut graph = make_graph(
             &swapchain,
@@ -87,19 +91,54 @@ fn main() {
         .unwrap();
 
         let mut prev = std::time::Instant::now();
-        let mut up_pressed = false;
-        let mut down_pressed = false;
-        let mut left_pressed = false;
-        let mut right_pressed = false;
-        let mut w_pressed = false;
-        let mut s_pressed = false;
-        let mut r_pressed = false;
+        let mut mouse_left_pressed = false;
+        let mut mouse_right_pressed = false;
 
-        event_loop.run(move |event, _, control_flow| {
+        let mut prev_mouse = None;
+
+        // let mut camera: CameraRig = CameraRig::builder()
+        //     .with(YawPitch::new().yaw_degrees(0.0).pitch_degrees(-30.0))
+        //     .with(Smooth::new_rotation(1.5))
+        //     .with(Arm::new(Vec3::Z * 8.0))
+        //     .build();
+
+        event_loop.run_return(move |event, _, control_flow| {
             control_flow.set_poll();
+
+            let mut arcball_camera = state.lock().unwrap();
+
+            let dt = prev.elapsed().as_secs_f32();
+            prev = std::time::Instant::now();
 
             match event {
                 Event::WindowEvent { event, window_id } => match event {
+                    WindowEvent::CursorMoved { position, .. } if prev_mouse.is_none() => {
+                        prev_mouse = Some(position);
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        let prev = prev_mouse.unwrap();
+                        if mouse_left_pressed {
+                            arcball_camera.rotate(
+                                Vec2::new(prev.x as f32, prev.y as f32),
+                                Vec2::new(position.x as f32, position.y as f32),
+                            );
+                        } else if mouse_right_pressed {
+                            let mouse_delta = Vec2::new(
+                                (position.x - prev.x) as f32,
+                                (position.y - prev.y) as f32,
+                            );
+                            arcball_camera.pan(mouse_delta);
+                        }
+                        prev_mouse = Some(position);
+                    }
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        let y = match delta {
+                            MouseScrollDelta::LineDelta(_, y) => y,
+                            MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                        };
+                        arcball_camera.zoom(y, 1.0);
+                    }
+
                     WindowEvent::CloseRequested if window_id == window.id() => {
                         control_flow.set_exit();
                     }
@@ -110,25 +149,17 @@ fn main() {
                         };
                         swapchain.surface_resized(extent);
                     }
-                    WindowEvent::KeyboardInput {
+                    WindowEvent::MouseInput {
                         device_id,
-                        input,
-                        is_synthetic,
+                        state,
+                        button,
+                        ..
                     } => {
-                        let mut lock = state.lock().unwrap();
-
-                        if let Some(a) = input.virtual_keycode {
-                            let pressed = input.state == ElementState::Pressed;
-                            match a {
-                                VirtualKeyCode::Up => up_pressed = pressed,
-                                VirtualKeyCode::Down => down_pressed = pressed,
-                                VirtualKeyCode::Left => left_pressed = pressed,
-                                VirtualKeyCode::Right => right_pressed = pressed,
-                                VirtualKeyCode::W => w_pressed = pressed,
-                                VirtualKeyCode::S => s_pressed = pressed,
-                                VirtualKeyCode::R => r_pressed = pressed,
-                                _ => {}
-                            }
+                        let pressed = state == ElementState::Pressed;
+                        match button {
+                            MouseButton::Left => mouse_left_pressed = pressed,
+                            MouseButton::Right => mouse_right_pressed = pressed,
+                            _ => {}
                         }
                     }
                     _ => {}
@@ -161,48 +192,10 @@ fn main() {
                     window.request_redraw();
                 }
                 Event::RedrawRequested(req) => {
-                    let dt = prev.elapsed().as_secs_f32().min(0.5);
-                    prev = std::time::Instant::now();
-
-                    let mut lock = state.lock().unwrap();
-                    let scale = 700.0 * lock.zoom * dt;
-
-                    if up_pressed {
-                        lock.y_shift += scale;
-                    }
-                    if down_pressed {
-                        lock.y_shift -= scale;
-                    }
-                    if left_pressed {
-                        lock.x_shift += scale;
-                    }
-                    if right_pressed {
-                        lock.x_shift -= scale;
-                    }
-                    if w_pressed {
-                        let f = 0.999f32.powf(dt.recip());
-                        lock.zoom *= f;
-                    }
-                    if s_pressed {
-                        let f = 0.999f32.powf(dt.recip());
-                        lock.zoom /= f;
-                    }
-                    if r_pressed {
-                        lock.zoom = 1.0;
-                        lock.x_shift = 0.0;
-                        lock.y_shift = 0.0;
-                    }
-
-                    lock.x_shift = lock.x_shift.round();
-                    lock.y_shift = lock.y_shift.round();
-
-                    lock.zoom = lock.zoom.clamp(0.001, 999.0);
-
-                    drop(lock);
-
                     let size = window.inner_size();
                     if !(window.is_visible() == Some(false) || size.width == 0 || size.height == 0)
                     {
+                        drop(arcball_camera);
                         graph.run();
                     }
                     device.idle_cleanup_poll();
@@ -217,7 +210,7 @@ fn main() {
 unsafe fn make_graph(
     swapchain: &object::Swapchain,
     queue: device::submission::Queue,
-    state: Arc<Mutex<ViewState>>,
+    state: Arc<Mutex<ArcballCamera>>,
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
     device: &device::OwnedDevice,
@@ -245,7 +238,7 @@ unsafe fn make_graph(
         device.create_compute_pipeline(pipeline_info).unwrap()
     };
 
-    let create_image = |format: vk::Format, size: object::Extent| {
+    let create_image = |format: vk::Format, size: object::Extent, label: &'static str| {
         device
             .create_image(
                 object::ImageCreateInfo {
@@ -259,6 +252,7 @@ unsafe fn make_graph(
                     usage: vk::ImageUsageFlags::STORAGE,
                     sharing_mode_concurrent: false,
                     initial_layout: vk::ImageLayout::UNDEFINED,
+                    label: Some(label.into()),
                 },
                 vma::AllocationCreateInfo {
                     flags: vma::AllocationCreateFlags::empty(),
@@ -269,7 +263,7 @@ unsafe fn make_graph(
             .unwrap()
     };
 
-    let create_buffer = |usage: vk::BufferUsageFlags, size: u64| {
+    let create_buffer = |usage: vk::BufferUsageFlags, size: u64, label: &'static str| {
         device
             .create_buffer(
                 object::BufferCreateInfo {
@@ -277,6 +271,7 @@ unsafe fn make_graph(
                     size,
                     usage,
                     sharing_mode_concurrent: false,
+                    label: Some(label.into()),
                 },
                 vma::AllocationCreateInfo {
                     flags: vma::AllocationCreateFlags::empty(),
@@ -292,12 +287,21 @@ unsafe fn make_graph(
     let compute_vertex = create_pipeline("shaders/compute_vertex.comp", false);
     let emit_triangles = create_pipeline("shaders/emit_triangles.comp", false);
 
-    let function_values = create_image(vk::Format::R16_SFLOAT, object::Extent::D3(64, 64, 64));
+    let function_values = create_image(
+        vk::Format::R16_SFLOAT,
+        object::Extent::D3(64, 64, 64),
+        "function_values",
+    );
     let intersections = create_image(
         vk::Format::R8G8B8A8_UNORM,
         object::Extent::D3(64 * 3, 64, 64),
+        "intersections",
     );
-    let vertex_indices = create_image(vk::Format::R32_UINT, object::Extent::D3(64, 64, 64));
+    let vertex_indices = create_image(
+        vk::Format::R32_UINT,
+        object::Extent::D3(64, 64, 64),
+        "vertex_indices",
+    );
 
     let vertices = create_buffer(
         vk::BufferUsageFlags::TRANSFER_SRC
@@ -305,6 +309,7 @@ unsafe fn make_graph(
             | vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::VERTEX_BUFFER,
         3 * 4 * 1024 * 512,
+        "vertices",
     );
     let indices = create_buffer(
         vk::BufferUsageFlags::TRANSFER_SRC
@@ -312,6 +317,7 @@ unsafe fn make_graph(
             | vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::INDEX_BUFFER,
         4 * 1024 * 1024,
+        "indices",
     );
 
     let vert_module = modules
@@ -383,8 +389,8 @@ unsafe fn make_graph(
             ..Default::default()
         })
         .depth_stencil(object::state::DepthStencil {
-            depth_test_enable: true,
-            depth_write_enable: true,
+            depth_test_enable: false,
+            depth_write_enable: false,
             depth_compare_op: vk::CompareOp::LESS,
             depth_bounds_test_enable: false,
             stencil_test_enable: false,
@@ -428,6 +434,7 @@ unsafe fn make_graph(
                 usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 sharing_mode_concurrent: false,
                 initial_layout: vk::ImageLayout::UNDEFINED,
+                label: Some("depth".into()),
             },
             vma::AllocationCreateInfo {
                 flags: vma::AllocationCreateFlags::empty(),
@@ -435,7 +442,6 @@ unsafe fn make_graph(
                 required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 ..Default::default()
             },
-            "depth",
         );
 
         let draw_parameter_buffer = b.create_buffer(
@@ -444,6 +450,7 @@ unsafe fn make_graph(
                 size: std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u64,
                 usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDIRECT_BUFFER,
                 sharing_mode_concurrent: false,
+                label: Some("draw_parameter_buffer".into()),
             },
             vma::AllocationCreateInfo {
                 flags: vma::AllocationCreateFlags::empty(),
@@ -451,9 +458,11 @@ unsafe fn make_graph(
                 required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 ..Default::default()
             },
-            "draw_parameter_buffer",
         );
         let swapchain = b.acquire_swapchain(swapchain.clone());
+
+        const INDEX_CAPACITY: u32 = 1024 * 512;
+        const VERTEX_CAPACITY: u32 = 1024 * 512;
 
         b.add_pass(
             queue,
@@ -477,20 +486,25 @@ unsafe fn make_graph(
                     // the layout of the allocator:
                     //  u32 capacity
                     //  u32 current offset
+                    let vertices_buffer = e.get_buffer(vertices);
                     d.cmd_update_buffer(
                         cmd,
-                        e.get_buffer(vertices),
+                        vertices_buffer,
                         0,
-                        8,
-                        [1024 * 512, 0].as_ptr().cast(),
+                        4,
+                        [VERTEX_CAPACITY].as_ptr().cast(),
                     );
+                    d.cmd_fill_buffer(cmd, vertices_buffer, 4, vk::WHOLE_SIZE, 0);
+
+                    let indices_buffer = e.get_buffer(indices);
                     d.cmd_update_buffer(
                         cmd,
-                        e.get_buffer(indices),
+                        indices_buffer,
                         0,
-                        8,
-                        [1024 * 1024, 0].as_ptr().cast(),
+                        4,
+                        [INDEX_CAPACITY].as_ptr().cast(),
                     );
+                    d.cmd_fill_buffer(cmd, indices_buffer, 4, vk::WHOLE_SIZE, 0);
                 },
             ),
             "Reset buffer bump allocators",
@@ -504,7 +518,8 @@ unsafe fn make_graph(
                         function_values,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
+                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                         vk::ImageLayout::GENERAL,
                         None,
                     );
@@ -522,10 +537,7 @@ unsafe fn make_graph(
                             0,
                             &DescImage {
                                 sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(
-                                    function_values,
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
+                                view: e.get_default_image_view(function_values),
                                 layout: vk::ImageLayout::GENERAL,
                             },
                         )
@@ -577,7 +589,8 @@ unsafe fn make_graph(
                         intersections,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
+                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                         vk::ImageLayout::GENERAL,
                         None,
                     );
@@ -595,10 +608,7 @@ unsafe fn make_graph(
                             0,
                             &DescImage {
                                 sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(
-                                    function_values,
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
+                                view: e.get_default_image_view(function_values),
                                 layout: vk::ImageLayout::GENERAL,
                             },
                         )
@@ -607,10 +617,7 @@ unsafe fn make_graph(
                             0,
                             &DescImage {
                                 sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(
-                                    intersections,
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
+                                view: e.get_default_image_view(intersections),
                                 layout: vk::ImageLayout::GENERAL,
                             },
                         )
@@ -654,15 +661,17 @@ unsafe fn make_graph(
                         vertex_indices,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
+                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                         vk::ImageLayout::GENERAL,
                         None,
                     );
                     builder.use_buffer(
-                        indices,
+                        vertices,
                         vk::BufferUsageFlags::STORAGE_BUFFER,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
+                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                     );
                 },
                 move |e, d| {
@@ -678,10 +687,7 @@ unsafe fn make_graph(
                             0,
                             &DescImage {
                                 sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(
-                                    intersections,
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
+                                view: e.get_default_image_view(intersections),
                                 layout: vk::ImageLayout::GENERAL,
                             },
                         )
@@ -690,10 +696,7 @@ unsafe fn make_graph(
                             0,
                             &DescImage {
                                 sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(
-                                    vertex_indices,
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
+                                view: e.get_default_image_view(vertex_indices),
                                 layout: vk::ImageLayout::GENERAL,
                             },
                         )
@@ -701,7 +704,7 @@ unsafe fn make_graph(
                             2,
                             0,
                             &DescBuffer {
-                                buffer: e.get_buffer(indices),
+                                buffer: e.get_buffer(vertices),
                                 ..Default::default()
                             },
                         )
@@ -731,12 +734,18 @@ unsafe fn make_graph(
                         vertex_indices,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_READ,
                         vk::ImageLayout::GENERAL,
                         None,
                     );
                     builder.use_buffer(
                         vertices,
+                        vk::BufferUsageFlags::STORAGE_BUFFER,
+                        vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_READ,
+                    );
+                    builder.use_buffer(
+                        indices,
                         vk::BufferUsageFlags::STORAGE_BUFFER,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
                         vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
@@ -755,10 +764,7 @@ unsafe fn make_graph(
                             0,
                             &DescImage {
                                 sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(
-                                    function_values,
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
+                                view: e.get_default_image_view(function_values),
                                 layout: vk::ImageLayout::GENERAL,
                             },
                         )
@@ -767,10 +773,7 @@ unsafe fn make_graph(
                             0,
                             &DescImage {
                                 sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(
-                                    vertex_indices,
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
+                                view: e.get_default_image_view(vertex_indices),
                                 layout: vk::ImageLayout::GENERAL,
                             },
                         )
@@ -850,6 +853,7 @@ unsafe fn make_graph(
                 vertices,
                 indices,
                 draw_parameter_buffer,
+                angles: state.clone(),
             },
             "Draw triangles",
         );
@@ -874,7 +878,8 @@ unsafe fn make_device(
     conf.add_extension(vk::KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
     conf.add_extension(vk::EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME);
     conf.add_extension(vk::EXT_SHADER_SUBGROUP_BALLOT_EXTENSION_NAME);
-    conf.add_extension(vk::KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+    conf.add_extension(vk::KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
+    conf.add_extension(vk::EXT_DEBUG_UTILS_EXTENSION_NAME);
 
     conf.fill_in_extensions().unwrap();
 
@@ -884,7 +889,8 @@ unsafe fn make_device(
             pumice::cstr!("VK_LAYER_KHRONOS_validation"),
             // pumice::cstr!("VK_LAYER_LUNARG_api_dump"),
         ],
-        enable_debug_callback: true,
+        enable_debug_callback: false,
+        debug_labeling: true,
         app_name: "test application".to_owned(),
         verbose: false,
     };

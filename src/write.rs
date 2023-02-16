@@ -151,6 +151,8 @@ pub fn compile_glsl_to_spirv(
     let child = std::process::Command::new("glslangValidator")
         .arg("--target-env")
         .arg("vulkan1.1")
+        // -gVS seems to break reflection?
+        .arg("-g")
         .arg("-o")
         .arg("compiled.spv")
         .arg(&file)

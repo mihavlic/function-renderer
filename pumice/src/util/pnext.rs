@@ -333,10 +333,6 @@ macro_rules! pnext_visit {
         ::vk10::StructureType::WIN32_SURFACE_CREATE_INFO_KHR => { let $object = $pnext
         .cast:: < crate ::extensions::khr_win32_surface::Win32SurfaceCreateInfoKHR > ();
         $op; $pnext = (* $object).p_next; } $crate
-        ::vk10::StructureType::DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT => { let $object =
-        $pnext .cast:: < crate
-        ::extensions::ext_debug_report::DebugReportCallbackCreateInfoEXT > (); $op;
-        $pnext = (* $object).p_next; } $crate
         ::vk10::StructureType::PIPELINE_RENDERING_CREATE_INFO => { let $object = $pnext
         .cast:: < crate
         ::extensions::khr_dynamic_rendering::PipelineRenderingCreateInfoKHR > (); $op;

@@ -1450,17 +1450,6 @@ unsafe impl DeepCopy for crate::extensions::khr_swapchain::PresentInfoKHR {
             .write_arr_ptr(self.p_results, (self.swapchain_count) as usize);
     }
 }
-unsafe impl DeepCopy
-for crate::extensions::ext_debug_report::DebugReportCallbackCreateInfoEXT {
-    fn measure(&self, measure: &mut CopyMeasure) {
-        unsafe {
-            measure.measure_pnext(self.p_next);
-        }
-    }
-    unsafe fn copy(&self, copy: *mut Self, writer: &mut CopyWriter) {
-        (*copy).p_next = writer.write_pnext(self.p_next) as *const _;
-    }
-}
 unsafe impl DeepCopy for crate::vk11::PhysicalDeviceFeatures2 {
     fn measure(&self, measure: &mut CopyMeasure) {
         unsafe {
@@ -2995,7 +2984,6 @@ value_type_copy_impl! {
     ::vk11::DescriptorUpdateTemplate, crate ::vk11::SamplerYcbcrConversion, crate
     ::extensions::khr_surface::SurfaceKHR, crate
     ::extensions::khr_swapchain::SwapchainKHR, crate
-    ::extensions::ext_debug_report::DebugReportCallbackEXT, crate
     ::extensions::ext_debug_utils::DebugUtilsMessengerEXT, crate
     ::extensions::khr_timeline_semaphore::SemaphoreTypeKHR, crate ::vk10::Offset2D, crate
     ::vk10::Offset3D, crate ::vk10::Extent2D, crate ::vk10::Extent3D, crate
@@ -3062,8 +3050,6 @@ value_type_copy_impl! {
     ::extensions::khr_surface::ColorSpaceKHR, crate
     ::extensions::khr_surface::CompositeAlphaFlagsKHR, crate
     ::extensions::khr_surface::SurfaceTransformFlagsKHR, crate
-    ::extensions::ext_debug_report::DebugReportFlagsEXT, crate
-    ::extensions::ext_debug_report::DebugReportObjectTypeEXT, crate
     ::vk11::SubgroupFeatureFlags, crate ::vk10::DescriptorSetLayoutCreateFlags, crate
     ::vk11::ExternalMemoryHandleTypeFlags, crate ::vk11::ExternalMemoryFeatureFlags,
     crate ::vk11::ExternalSemaphoreHandleTypeFlags, crate

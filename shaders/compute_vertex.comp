@@ -1,8 +1,13 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
-#extension GL_KHR_shader_subgroup_basic : enable
-#extension GL_KHR_shader_subgroup_arithmetic : enable
-#extension GL_KHR_shader_subgroup_ballot : enable
+
+#define USE_SUBGROUP_OPS
+
+#ifdef USE_SUBGROUP_OPS
+    #extension GL_KHR_shader_subgroup_basic : enable
+    #extension GL_KHR_shader_subgroup_arithmetic : enable
+    #extension GL_KHR_shader_subgroup_ballot : enable
+#endif
 
 layout (set = 0, binding = 0, rgba8) uniform readonly image3D intersections;
 layout (set = 0, binding = 1, r32ui) uniform writeonly uimage3D vertex_indices;
@@ -28,7 +33,8 @@ float plane_distance(vec3 normal, vec3 intersection, vec3 point) {
 }
 
 vec4 get_edge(uvec3 pos, uint axis) {
-    uvec3 index = uvec3(pos.x + axis * 64, pos.xy);
+    uvec3 index = uvec3(pos.x * 3 + axis, pos.yz);
+    // uvec3 index = uvec3(pos.x + axis * 64, pos.yz);
     return imageLoad(intersections, ivec3(index));
 }
 
@@ -48,6 +54,13 @@ void main() {
     //   | /          | /        | /          |/       | /
     //   |/___________|/         A/___________B        |/___ x
     //          0
+
+    // first clear the index in case we don't compute any vertex
+    imageStore(vertex_indices, ivec3(global_id.xyz), uvec4(INDEX_INVALID));
+
+    if (global_id.x >= 63 || global_id.y >= 63 || global_id.z >= 63) {
+        return;
+    }
 
     uvec3 A = global_id;
     uvec3 B = A + uvec3(1, 0, 0);
@@ -75,71 +88,84 @@ void main() {
         get_edge(D, 2),
     };
 
+    uvec3 A_l = uvec3(0, 0, 0);
+    uvec3 B_l = uvec3(1, 0, 0);
+    uvec3 C_l = uvec3(1, 1, 0);
+    uvec3 D_l = uvec3(0, 1, 0);
+    uvec3 E_l = uvec3(0, 0, 1);
+    uvec3 F_l = uvec3(1, 0, 1);
+    uvec3 G_l = uvec3(1, 1, 1);
+    uvec3 H_l = uvec3(0, 1, 1);
+
     uvec3 edge_vertices[12] = {
-        A,
-        D,
-        H,
-        E,
-        A,
-        E,
-        F,
-        B,
-        A,
-        B,
-        C,
-        D
+        A_l,
+        D_l,
+        H_l,
+        E_l,
+        A_l,
+        E_l,
+        F_l,
+        B_l,
+        A_l,
+        B_l,
+        C_l,
+        D_l
     };
 
-    // xyz(edge intersection) w(plane q parameter)
-    vec4 edge_intersections[12];
+    // stores the q parameter of a plane equation:
+    // ax + by + cz + q = 0
+    float intersection_planes_q[12];
 
     vec3 intersections_sum = vec3(0.0);
     uint intersections_count = 0;
     for (int i = 0; i < 12; i++) {
         vec4 intersection = edges[i];
         // zero is a special value
-        if (intersection.w != 0.0) {
-            vec3 cellspace_point = vec3(edge_vertices[i]) + intersection.w * axes[i / 4];
+        if (intersection.w > 0.0) {
+            vec3 cellspace_point = vec3(edge_vertices[i]) + intersection.w * vec3(axes[i / 4]);
 
             // ax + by + cz + q = 0
             float q = -dot(intersection.xyz, cellspace_point);
 
-            edge_intersections[i] = vec4(cellspace_point, q);
             intersections_sum += cellspace_point;
             intersections_count += 1;
+
+            intersection_planes_q[i] = q;
         }
     }
 
     // this cell has no intersections, we can exit
     if (intersections_count == 0) {
-        imageStore(vertex_indices, ivec3(global_id.xyz), uvec4(INDEX_INVALID));
         return;
     }
 
-    vec3 mass_point = intersections_sum / float(intersections_count);
+    // the vertex is first approximated by the average of intersections
+    vec3 cellspace_vertex = intersections_sum / float(intersections_count);
 
-    // iteratively move the point according to the distance from the intersection planes
-    for (int iter = 0; iter < 5; iter++) {
-        vec3 force = vec3(0.0);
-        for (int i = 0; i < 12; i++) {
-            vec4 intersection = edges[i];
-            if (intersection.w != 0.0) {
-                vec3 normal = intersection.xyz;
-                float q = edge_intersections[i].w;
+    // iteratively move the point according to the distance to the intersection planes
+    // for (int iter = 0; iter < 5; iter++) {
+    //     vec3 force = vec3(0.0);
+    //     for (int i = 0; i < 12; i++) {
+    //         vec4 intersection = edges[i];
+    //         if (intersection.w != 0.0) {
+    //             vec3 normal = intersection.xyz;
+    //             float q = intersection_planes_q[i];
 
-                float plane_distance = dot(normal, mass_point) + q;
-                force += plane_distance * normal;
-            }
+    //             float plane_distance = dot(normal, cellspace_vertex) + q;
+    //             force += plane_distance * normal;
+    //         }
 
-        }
-        mass_point += force * float(intersections_count);
-    }
+    //     }
+    //     cellspace_vertex += force / float(intersections_count);
+    // }
 
     // we are bump allocating vertices, a stream compaction pass would probably be more efficient
     // but it seems to be very complicated and no very worth it at this stage
     // instead we use subgroup operation to do a prefix some over invocations which have a vertex to
     // write and then bump allocate this whole block, then each invocation writes its vertex to the predetermined index
 
+
+#ifdef USE_SUBGROUP_OPS
     // prefix sum to find out the subgroup local index of the output vertex
     uint inclusive_vertex_batch_offset = subgroupInclusiveAdd(1);
     // is there a better way to do this?
@@ -156,14 +182,15 @@ void main() {
 
     // -1 since the prefix sum is inclusive of the calling invocation
     uint index = broadcast_batch_offset + inclusive_vertex_batch_offset - 1;
+#else
+    uint index = atomicAdd(vertices.offset, 1);
+#endif
 
+    vec3 vertex = cellspace_vertex + vec3(A);
+
+    // if we've reached the capacity of the vertex buffer, just throw away the vertex
     if (index < vertices.size) {
-        vertices.vertices[index];
-    } else {
-        // if we've reached the capacity of the vertex buffer, just throw away the vertex
-        index = INDEX_INVALID;
+        vertices.vertices[index] = vertex;
+        imageStore(vertex_indices, ivec3(global_id.xyz), uvec4(index));
     }
-
-    imageStore(vertex_indices, ivec3(global_id.xyz), uvec4(index));
-
 }

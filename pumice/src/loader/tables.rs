@@ -417,33 +417,6 @@ pub struct InstanceTable {
             queue_family_index: u32,
         ) -> crate::vk10::Bool32,
     >,
-    pub create_debug_report_callback_ext: Option<
-        unsafe extern "system" fn(
-            instance: crate::vk10::Instance,
-            p_create_info: *const crate::extensions::ext_debug_report::DebugReportCallbackCreateInfoEXT,
-            p_allocator: *const crate::vk10::AllocationCallbacks,
-            p_callback: *mut crate::extensions::ext_debug_report::DebugReportCallbackEXT,
-        ) -> crate::vk10::Result,
-    >,
-    pub destroy_debug_report_callback_ext: Option<
-        unsafe extern "system" fn(
-            instance: crate::vk10::Instance,
-            callback: crate::extensions::ext_debug_report::DebugReportCallbackEXT,
-            p_allocator: *const crate::vk10::AllocationCallbacks,
-        ),
-    >,
-    pub debug_report_message_ext: Option<
-        unsafe extern "system" fn(
-            instance: crate::vk10::Instance,
-            flags: crate::extensions::ext_debug_report::DebugReportFlagsEXT,
-            object_type: crate::extensions::ext_debug_report::DebugReportObjectTypeEXT,
-            object: u64,
-            location: usize,
-            message_code: i32,
-            p_layer_prefix: *const std::os::raw::c_char,
-            p_message: *const std::os::raw::c_char,
-        ),
-    >,
     pub create_stream_descriptor_surface_ggp: Option<
         unsafe extern "system" fn(
             instance: crate::vk10::Instance,
@@ -709,14 +682,6 @@ impl InstanceTable {
                     self, loader, (create_win_32_surface_khr, "vkCreateWin32SurfaceKHR")
                     (get_physical_device_win_32_presentation_support_khr,
                     "vkGetPhysicalDeviceWin32PresentationSupportKHR")
-                }
-            }
-            if conf.extension_enabled(cstr!("VK_EXT_debug_report")) {
-                load_fns! {
-                    self, loader, (create_debug_report_callback_ext,
-                    "vkCreateDebugReportCallbackEXT") (destroy_debug_report_callback_ext,
-                    "vkDestroyDebugReportCallbackEXT") (debug_report_message_ext,
-                    "vkDebugReportMessageEXT")
                 }
             }
             if conf.extension_enabled(cstr!("VK_GGP_stream_descriptor_surface")) {
@@ -1355,60 +1320,6 @@ impl InstanceTable {
         (self
             .get_physical_device_win_32_presentation_support_khr
             .unwrap())(physical_device, queue_family_index)
-    }
-    #[track_caller]
-    #[doc(alias = "vkCreateDebugReportCallbackEXT")]
-    /// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkCreateDebugReportCallbackEXT.html)
-    pub unsafe fn create_debug_report_callback_ext(
-        &self,
-        instance: crate::vk10::Instance,
-        p_create_info: *const crate::extensions::ext_debug_report::DebugReportCallbackCreateInfoEXT,
-        p_allocator: *const crate::vk10::AllocationCallbacks,
-        p_callback: *mut crate::extensions::ext_debug_report::DebugReportCallbackEXT,
-    ) -> crate::vk10::Result {
-        (self
-            .create_debug_report_callback_ext
-            .unwrap())(instance, p_create_info, p_allocator, p_callback)
-    }
-    #[track_caller]
-    #[doc(alias = "vkDestroyDebugReportCallbackEXT")]
-    /// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkDestroyDebugReportCallbackEXT.html)
-    pub unsafe fn destroy_debug_report_callback_ext(
-        &self,
-        instance: crate::vk10::Instance,
-        callback: crate::extensions::ext_debug_report::DebugReportCallbackEXT,
-        p_allocator: *const crate::vk10::AllocationCallbacks,
-    ) {
-        (self
-            .destroy_debug_report_callback_ext
-            .unwrap())(instance, callback, p_allocator)
-    }
-    #[track_caller]
-    #[doc(alias = "vkDebugReportMessageEXT")]
-    /// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkDebugReportMessageEXT.html)
-    pub unsafe fn debug_report_message_ext(
-        &self,
-        instance: crate::vk10::Instance,
-        flags: crate::extensions::ext_debug_report::DebugReportFlagsEXT,
-        object_type: crate::extensions::ext_debug_report::DebugReportObjectTypeEXT,
-        object: u64,
-        location: usize,
-        message_code: i32,
-        p_layer_prefix: *const std::os::raw::c_char,
-        p_message: *const std::os::raw::c_char,
-    ) {
-        (self
-            .debug_report_message_ext
-            .unwrap())(
-            instance,
-            flags,
-            object_type,
-            object,
-            location,
-            message_code,
-            p_layer_prefix,
-            p_message,
-        )
     }
     #[track_caller]
     #[doc(alias = "vkCreateStreamDescriptorSurfaceGGP")]

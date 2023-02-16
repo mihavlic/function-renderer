@@ -1,3 +1,6 @@
+use std::sync::{Arc, Mutex};
+
+use glam::Vec3;
 use graph::{
     graph::{
         compile::GraphContext, execute::GraphExecutor, record::GraphPassBuilder,
@@ -9,6 +12,8 @@ use graph::{
 };
 use pumice::vk;
 
+use crate::arcball::ArcballCamera;
+
 pub struct SimpleShader {
     pub pipeline: GraphicsPipeline,
     pub attachments: Vec<GraphImage>,
@@ -16,6 +21,7 @@ pub struct SimpleShader {
     pub vertices: GraphBuffer,
     pub indices: GraphBuffer,
     pub draw_parameter_buffer: GraphBuffer,
+    pub angles: Arc<Mutex<ArcballCamera>>,
 }
 
 impl CreatePass for SimpleShader {
@@ -45,6 +51,18 @@ impl CreatePass for SimpleShader {
                 vk::BufferUsageFlags::INDIRECT_BUFFER,
                 vk::PipelineStageFlags2KHR::DRAW_INDIRECT,
                 vk::AccessFlags2KHR::INDIRECT_COMMAND_READ,
+            );
+            builder.use_buffer(
+                self.indices,
+                vk::BufferUsageFlags::INDEX_BUFFER,
+                vk::PipelineStageFlags2KHR::INDEX_INPUT,
+                vk::AccessFlags2KHR::INDEX_READ,
+            );
+            builder.use_buffer(
+                self.vertices,
+                vk::BufferUsageFlags::VERTEX_BUFFER,
+                vk::PipelineStageFlags2KHR::VERTEX_INPUT,
+                vk::AccessFlags2KHR::VERTEX_ATTRIBUTE_READ,
             );
         }
         let mode = RenderPassMode::Dynamic {
@@ -96,7 +114,7 @@ impl RenderPass for SimpleShaderPass {
             .attachments
             .iter()
             .map(|&image| vk::RenderingAttachmentInfoKHR {
-                image_view: executor.get_default_image_view(image, vk::ImageAspectFlags::COLOR),
+                image_view: executor.get_default_image_view(image),
                 image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 resolve_mode: vk::ResolveModeFlagsKHR::NONE,
                 load_op: vk::AttachmentLoadOp::CLEAR,
@@ -118,7 +136,7 @@ impl RenderPass for SimpleShaderPass {
         let mut depth = vk::RenderingAttachmentInfoKHR::default();
         if let Some(image) = self.info.depth {
             depth = vk::RenderingAttachmentInfoKHR {
-                image_view: executor.get_default_image_view(image, vk::ImageAspectFlags::DEPTH),
+                image_view: executor.get_default_image_view(image),
                 image_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                 resolve_mode: vk::ResolveModeFlagsKHR::NONE,
                 load_op: vk::AttachmentLoadOp::CLEAR,
@@ -158,6 +176,23 @@ impl RenderPass for SimpleShaderPass {
             self.pipeline.get_handle(),
         );
 
+        let angles = self.info.angles.lock().unwrap();
+
+        let look_at = angles.get_mat4();
+        let perspective = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.2, 256.0);
+        let flip = glam::Mat4::from_diagonal(glam::Vec4::new(1.0, -1.0, 1.0, 1.0));
+        let mut matrix = flip * perspective * look_at;
+        std::mem::swap(&mut matrix.y_axis, &mut matrix.z_axis);
+
+        d.cmd_push_constants(
+            cmd,
+            self.pipeline.get_object().get_create_info().layout.raw(),
+            vk::ShaderStageFlags::VERTEX,
+            0,
+            4 * 16,
+            (&matrix as *const glam::f32::Mat4).cast(),
+        );
+
         let pipeline_info = self.pipeline.get_object().get_create_info();
 
         if let Some(state) = &pipeline_info.dynamic_state {
@@ -183,11 +218,11 @@ impl RenderPass for SimpleShaderPass {
             }
         }
 
-        d.cmd_bind_vertex_buffers(cmd, 0, &[executor.get_buffer(self.info.vertices)], &[0]);
+        d.cmd_bind_vertex_buffers(cmd, 0, &[executor.get_buffer(self.info.vertices)], &[8]);
         d.cmd_bind_index_buffer(
             cmd,
             executor.get_buffer(self.info.indices),
-            0,
+            8,
             vk::IndexType::UINT32,
         );
 
@@ -196,11 +231,17 @@ impl RenderPass for SimpleShaderPass {
             executor.get_buffer(self.info.draw_parameter_buffer),
             0,
             1,
-            1,
+            0,
         );
 
         d.cmd_end_rendering_khr(cmd);
 
         Ok(())
     }
+}
+
+pub struct ArcBallAngles {
+    pub horizontal: f32,
+    pub vertical: f32,
+    pub distance: f32,
 }

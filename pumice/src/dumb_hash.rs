@@ -1344,20 +1344,6 @@ impl DumbHash for crate::extensions::khr_swapchain::PresentInfoKHR {
         }
     }
 }
-impl DumbHash for crate::extensions::ext_debug_report::DebugReportCallbackCreateInfoEXT {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        unsafe {
-            self.s_type.hash(state);
-            hash_pnext(self.p_next, state);
-            self.flags.hash(state);
-            std::ptr::hash(
-                std::mem::transmute::<_, *const ()>(self.pfn_callback),
-                state,
-            );
-            self.p_user_data.hash(state);
-        }
-    }
-}
 impl DumbHash for crate::vk11::PhysicalDeviceFeatures2 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe {
@@ -2722,7 +2708,6 @@ dumb_hash_passthrough_impl! {
     ::vk11::DescriptorUpdateTemplate, crate ::vk11::SamplerYcbcrConversion, crate
     ::extensions::khr_surface::SurfaceKHR, crate
     ::extensions::khr_swapchain::SwapchainKHR, crate
-    ::extensions::ext_debug_report::DebugReportCallbackEXT, crate
     ::extensions::ext_debug_utils::DebugUtilsMessengerEXT, crate
     ::extensions::khr_timeline_semaphore::SemaphoreTypeKHR, crate ::vk10::Offset2D, crate
     ::vk10::Offset3D, crate ::vk10::Extent2D, crate ::vk10::Extent3D, crate
@@ -2785,8 +2770,6 @@ dumb_hash_passthrough_impl! {
     ::extensions::khr_surface::ColorSpaceKHR, crate
     ::extensions::khr_surface::CompositeAlphaFlagsKHR, crate
     ::extensions::khr_surface::SurfaceTransformFlagsKHR, crate
-    ::extensions::ext_debug_report::DebugReportFlagsEXT, crate
-    ::extensions::ext_debug_report::DebugReportObjectTypeEXT, crate
     ::vk11::SubgroupFeatureFlags, crate ::vk10::DescriptorSetLayoutCreateFlags, crate
     ::vk11::ExternalMemoryHandleTypeFlags, crate ::vk11::ExternalMemoryFeatureFlags,
     crate ::vk11::ExternalSemaphoreHandleTypeFlags, crate

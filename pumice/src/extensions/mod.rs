@@ -1,5 +1,4 @@
 pub mod metadata;
-pub mod ext_debug_report;
 pub mod ext_debug_utils;
 pub mod ext_directfb_surface;
 pub mod ext_headless_surface;
@@ -15,6 +14,7 @@ pub mod khr_dynamic_rendering;
 pub mod khr_get_physical_device_properties2;
 pub mod khr_maintenance2;
 pub mod khr_multiview;
+pub mod khr_shader_non_semantic_info;
 pub mod khr_surface;
 pub mod khr_swapchain;
 pub mod khr_synchronization2;

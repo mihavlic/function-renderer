@@ -5823,8 +5823,6 @@ impl Result {
     /// khr_swapchain
     pub const SUBOPTIMAL_KHR: Self = Self(1000001003);
     pub const ERROR_OUT_OF_DATE_KHR: Self = Self(-1000001004);
-    /// ext_debug_report
-    pub const ERROR_VALIDATION_FAILED_EXT: Self = Self(-1000011001);
 }
 crate::enum_impl! {
     Result : i32, SUCCESS, NOT_READY, TIMEOUT, EVENT_SET, EVENT_RESET, INCOMPLETE,
@@ -5834,7 +5832,7 @@ crate::enum_impl! {
     ERROR_TOO_MANY_OBJECTS, ERROR_FORMAT_NOT_SUPPORTED, ERROR_FRAGMENTED_POOL,
     ERROR_UNKNOWN, ERROR_OUT_OF_POOL_MEMORY, ERROR_INVALID_EXTERNAL_HANDLE,
     ERROR_SURFACE_LOST_KHR, ERROR_NATIVE_WINDOW_IN_USE_KHR, SUBOPTIMAL_KHR,
-    ERROR_OUT_OF_DATE_KHR, ERROR_VALIDATION_FAILED_EXT
+    ERROR_OUT_OF_DATE_KHR
 }
 #[doc(alias = "VkDynamicState")]
 /// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkDynamicState.html)
@@ -5895,8 +5893,6 @@ impl ObjectType {
     pub const SURFACE_KHR: Self = Self(1000000000);
     /// khr_swapchain
     pub const SWAPCHAIN_KHR: Self = Self(1000001000);
-    /// ext_debug_report
-    pub const DEBUG_REPORT_CALLBACK_EXT: Self = Self(1000011000);
     /// ext_debug_utils
     pub const DEBUG_UTILS_MESSENGER_EXT: Self = Self(1000128000);
 }
@@ -5906,7 +5902,7 @@ crate::enum_impl! {
     IMAGE_VIEW, SHADER_MODULE, PIPELINE_CACHE, PIPELINE_LAYOUT, RENDER_PASS, PIPELINE,
     DESCRIPTOR_SET_LAYOUT, SAMPLER, DESCRIPTOR_POOL, DESCRIPTOR_SET, FRAMEBUFFER,
     COMMAND_POOL, SAMPLER_YCBCR_CONVERSION, DESCRIPTOR_UPDATE_TEMPLATE, SURFACE_KHR,
-    SWAPCHAIN_KHR, DEBUG_REPORT_CALLBACK_EXT, DEBUG_UTILS_MESSENGER_EXT
+    SWAPCHAIN_KHR, DEBUG_UTILS_MESSENGER_EXT
 }
 #[doc(alias = "VkQueueFlags")]
 /// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkQueueFlags.html)

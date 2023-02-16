@@ -3,8 +3,6 @@ pub use crate::vk10::*;
 #[doc(no_inline)]
 pub use crate::vk11::*;
 #[doc(no_inline)]
-pub use crate::extensions::ext_debug_report::*;
-#[doc(no_inline)]
 pub use crate::extensions::ext_debug_utils::*;
 #[doc(no_inline)]
 pub use crate::extensions::ext_directfb_surface::*;
@@ -34,6 +32,8 @@ pub use crate::extensions::khr_get_physical_device_properties2::*;
 pub use crate::extensions::khr_maintenance2::*;
 #[doc(no_inline)]
 pub use crate::extensions::khr_multiview::*;
+#[doc(no_inline)]
+pub use crate::extensions::khr_shader_non_semantic_info::*;
 #[doc(no_inline)]
 pub use crate::extensions::khr_surface::*;
 #[doc(no_inline)]
