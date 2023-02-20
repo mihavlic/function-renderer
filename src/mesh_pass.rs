@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use glam::Vec3;
+use dolly::{prelude::RightHanded, rig::CameraRig, transform::Transform};
+use glam::{EulerRot, Mat4, Quat, Vec3, Vec3Swizzles};
 use graph::{
     graph::{
         compile::GraphContext, execute::GraphExecutor, record::GraphPassBuilder,
@@ -21,7 +22,7 @@ pub struct SimpleShader {
     pub vertices: GraphBuffer,
     pub indices: GraphBuffer,
     pub draw_parameter_buffer: GraphBuffer,
-    pub angles: Arc<Mutex<ArcballCamera>>,
+    pub transform: Arc<Mutex<Transform<RightHanded>>>,
 }
 
 impl CreatePass for SimpleShader {
@@ -142,8 +143,9 @@ impl RenderPass for SimpleShaderPass {
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,
                 clear_value: vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float_32: [0.0, 0.0, 0.0, 1.0],
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 1.0,
+                        stencil: 0,
                     },
                 },
                 ..Default::default()
@@ -176,21 +178,23 @@ impl RenderPass for SimpleShaderPass {
             self.pipeline.get_handle(),
         );
 
-        let angles = self.info.angles.lock().unwrap();
+        let perspective = Mat4::perspective_rh(1.2 * std::f32::consts::FRAC_PI_4, 1.0, 0.2, 512.0);
+        let world_to_view = {
+            let transform = self.info.transform.lock().unwrap();
+            let ro = Mat4::from_quat(transform.rotation.conjugate());
+            let tr = Mat4::from_translation(-transform.position);
+            ro * tr
+        };
 
-        let look_at = angles.get_mat4();
-        let perspective = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1.0, 0.2, 256.0);
-        let flip = glam::Mat4::from_diagonal(glam::Vec4::new(1.0, -1.0, 1.0, 1.0));
-        let mut matrix = flip * perspective * look_at;
-        std::mem::swap(&mut matrix.y_axis, &mut matrix.z_axis);
+        let matrices = [world_to_view, perspective];
 
         d.cmd_push_constants(
             cmd,
             self.pipeline.get_object().get_create_info().layout.raw(),
             vk::ShaderStageFlags::VERTEX,
             0,
-            4 * 16,
-            (&matrix as *const glam::f32::Mat4).cast(),
+            std::mem::size_of_val(&matrices) as u32,
+            matrices.as_ptr().cast(),
         );
 
         let pipeline_info = self.pipeline.get_object().get_create_info();

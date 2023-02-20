@@ -15,7 +15,7 @@ graph = { path = "../vulkan-engine" }
 pumice = {git = "https://github.com/mihavlic/vulkan-bindings.git", features = ["wrappers"]}
 pumice-vma = {git = "https://github.com/mihavlic/pumice-vma.git", features = ["VK_VERSION_1_1"]}
 graph = {git = "https://github.com/mihavlic/vulkan-engine.git"}
-winit = {version = "0.27.4", default-features = false, features = ["wayland", "x11"]}
+winit = {version = "0.28.1", default-features = false, features = ["wayland", "x11"]}
 notify = "5.1.0"
 rustyline = "10.1.0"
 glam = "0.22.0"

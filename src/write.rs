@@ -76,6 +76,7 @@ pub fn write_glsl(node: &Expression) -> String {
                 parser::UnaryOperation::ArcSin => "asin",
                 parser::UnaryOperation::ArcCos => "scos",
                 parser::UnaryOperation::ArcTan => "atan",
+                parser::UnaryOperation::Length => "length",
                 parser::UnaryOperation::ArcCotan => {
                     write!(out, "CONSTANT_HALF_PI - atan({child})").unwrap();
                     break 'block;
@@ -165,7 +166,11 @@ pub fn compile_glsl_to_spirv(
 
     let output = child.wait_with_output()?;
 
-    if !output.status.success() {
+    if !output.status.success()
+        || std::str::from_utf8(&output.stdout)
+            .map(|str| str.contains("error"))
+            .unwrap_or(false)
+    {
         let mut err = String::from_utf8_lossy(&output.stderr).to_string();
         err += &String::from_utf8_lossy(&output.stdout);
         Err(err)?;

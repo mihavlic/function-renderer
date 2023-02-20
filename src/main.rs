@@ -6,6 +6,7 @@ mod mesh_pass;
 mod parser;
 mod pass;
 mod write;
+mod yawpitch;
 
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
@@ -20,17 +21,19 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 use std::{io, slice};
 
 use arcball::ArcballCamera;
-use dolly::prelude::{Arm, Smooth, YawPitch};
+use dolly::prelude::{Arm, Position, RightHanded, Smooth};
 use dolly::rig::CameraRig;
+use dolly::transform::Transform;
 use glam::{Vec2, Vec3};
-use graph::device::reflection::ReflectedLayout;
+use graph::device::reflection::{ReflectedLayout, SpirvModule};
 use graph::device::{self, read_spirv, Device, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::GraphCompiler;
-use graph::graph::descriptors::{DescBuffer, DescImage, DescSetBuilder};
-use graph::graph::execute::GraphExecutor;
+use graph::graph::descriptors::{DescBuffer, DescImage, DescSetBuilder, DescriptorData};
+use graph::graph::execute::{GraphExecutor, GraphRunConfig, GraphRunStatus};
 use graph::graph::record::GraphPassBuilder;
 use graph::instance::{Instance, InstanceCreateInfo, OwnedInstance};
 use graph::object::{self, ImageCreateInfo, PipelineStage, SwapchainCreateInfo};
@@ -53,6 +56,7 @@ use winit::event_loop::EventLoop;
 use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::window::WindowBuilder;
 use write::{compile_glsl_to_spirv, make_density_function};
+use yawpitch::YawPitchZUp;
 
 use crate::write::make_glsl_math;
 
@@ -63,7 +67,6 @@ fn main() {
 
         let window = WindowBuilder::new()
             .with_inner_size(winit::dpi::LogicalSize::new(512.0f32, 512.0f32))
-            .with_always_on_top(true)
             .build(&event_loop)
             .unwrap();
 
@@ -73,17 +76,20 @@ fn main() {
         let mut modules = ShaderModules::new();
         let mut compiler = GraphCompiler::new();
 
-        let state = Arc::new(Mutex::new(ArcballCamera::new(
-            Vec3::splat(32.0),
-            1.0,
-            40.0,
-            Vec2::new(512.0, 512.0),
-        )));
+        let mut camera: CameraRig = CameraRig::builder()
+            .with(Position::new(Vec3::splat(32.0)))
+            .with(YawPitchZUp::new().pitch_degrees(25.0).yaw_degrees(90.0))
+            .with(Smooth::new_rotation(0.25))
+            .with(Arm::new(Vec3::Z * 64.0))
+            .build();
+
+        let transform: Arc<Mutex<Transform<RightHanded>>> =
+            Arc::new(Mutex::new(Transform::IDENTITY));
 
         let mut graph = make_graph(
             &swapchain,
             queue,
-            state.clone(),
+            transform.clone(),
             &mut modules,
             &mut compiler,
             &device,
@@ -94,51 +100,38 @@ fn main() {
         let mut mouse_left_pressed = false;
         let mut mouse_right_pressed = false;
 
-        let mut prev_mouse = None;
+        let mut graph_option = Some(graph);
+        let mut device_option = Some(device);
+        let mut swapchain_option = Some(swapchain);
+        let mut modules_option = Some(modules);
 
-        // let mut camera: CameraRig = CameraRig::builder()
-        //     .with(YawPitch::new().yaw_degrees(0.0).pitch_degrees(-30.0))
-        //     .with(Smooth::new_rotation(1.5))
-        //     .with(Arm::new(Vec3::Z * 8.0))
-        //     .build();
+        event_loop.run(move |event, _, control_flow| {
+            let mut graph = graph_option.as_mut().unwrap();
+            let mut device = device_option.as_mut().unwrap();
+            let mut swapchain = swapchain_option.as_mut().unwrap();
+            let mut modules = modules_option.as_mut().unwrap();
 
-        event_loop.run_return(move |event, _, control_flow| {
             control_flow.set_poll();
 
-            let mut arcball_camera = state.lock().unwrap();
-
             let dt = prev.elapsed().as_secs_f32();
+            {
+                *transform.lock().unwrap() = camera.update(dt);
+            }
+
             prev = std::time::Instant::now();
 
             match event {
-                Event::WindowEvent { event, window_id } => match event {
-                    WindowEvent::CursorMoved { position, .. } if prev_mouse.is_none() => {
-                        prev_mouse = Some(position);
-                    }
-                    WindowEvent::CursorMoved { position, .. } => {
-                        let prev = prev_mouse.unwrap();
+                Event::DeviceEvent { device_id, event } => match event {
+                    DeviceEvent::MouseMotion { delta: (x, y) } => {
                         if mouse_left_pressed {
-                            arcball_camera.rotate(
-                                Vec2::new(prev.x as f32, prev.y as f32),
-                                Vec2::new(position.x as f32, position.y as f32),
-                            );
-                        } else if mouse_right_pressed {
-                            let mouse_delta = Vec2::new(
-                                (position.x - prev.x) as f32,
-                                (position.y - prev.y) as f32,
-                            );
-                            arcball_camera.pan(mouse_delta);
+                            camera
+                                .driver_mut::<YawPitchZUp>()
+                                .rotate_yaw_pitch(x as f32, y as f32);
                         }
-                        prev_mouse = Some(position);
                     }
-                    WindowEvent::MouseWheel { delta, .. } => {
-                        let y = match delta {
-                            MouseScrollDelta::LineDelta(_, y) => y,
-                            MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                        };
-                        arcball_camera.zoom(y, 1.0);
-                    }
-
+                    _ => {}
+                },
+                Event::WindowEvent { event, window_id } => match event {
                     WindowEvent::CloseRequested if window_id == window.id() => {
                         control_flow.set_exit();
                     }
@@ -148,6 +141,13 @@ fn main() {
                             height: size.height,
                         };
                         swapchain.surface_resized(extent);
+                    }
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        let delta = match delta {
+                            MouseScrollDelta::LineDelta(_, y) => y,
+                            MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                        };
+                        camera.driver_mut::<Arm>().offset.z -= delta * 2.0;
                     }
                     WindowEvent::MouseInput {
                         device_id,
@@ -165,23 +165,35 @@ fn main() {
                     _ => {}
                 },
                 Event::MainEventsCleared => {
-                    match modules.poll() {
-                        hotreaload::PollResult::Recreate => {
+                    window.request_redraw();
+                }
+                Event::RedrawRequested(req) => {
+                    macro_rules! rebuild_graph {
+                        () => {{
                             let result = make_graph(
                                 &swapchain,
                                 queue,
-                                state.clone(),
+                                transform.clone(),
                                 &mut modules,
                                 &mut compiler,
                                 &device,
                             );
 
                             match result {
-                                Ok(ok) => graph = ok,
+                                Ok(ok) => {
+                                    graph_option = Some(ok);
+                                    graph = graph_option.as_mut().unwrap();
+                                }
                                 Err(err) => {
                                     eprintln!("Compilation error: {err}");
                                 }
-                            }
+                            };
+                        }};
+                    }
+
+                    match modules.poll() {
+                        hotreaload::PollResult::Recreate => {
+                            rebuild_graph!();
                         }
                         hotreaload::PollResult::Continue => {}
                         hotreaload::PollResult::Exit => {
@@ -189,18 +201,33 @@ fn main() {
                         }
                     }
 
-                    window.request_redraw();
-                }
-                Event::RedrawRequested(req) => {
                     let size = window.inner_size();
                     if !(window.is_visible() == Some(false) || size.width == 0 || size.height == 0)
                     {
-                        drop(arcball_camera);
-                        graph.run();
+                        let result = graph.run(GraphRunConfig {
+                            swapchain_acquire_timeout_ns: 1_000_000_000 / 30,
+                            acquire_swapchain_with_fence: false,
+                            return_after_swapchain_recreate: true,
+                        });
+                        match result {
+                            GraphRunStatus::Ok => {}
+                            GraphRunStatus::SwapchainAcquireTimeout => {}
+                            GraphRunStatus::SwapchainRecreated => rebuild_graph!(),
+                        }
+
+                        // throttle to reach ~60 fps
+                        control_flow.set_wait_timeout(Duration::from_micros(1_000_000 / 60))
                     }
                     device.idle_cleanup_poll();
                 }
-
+                Event::LoopDestroyed => {
+                    drop(graph_option.take());
+                    drop(swapchain_option.take());
+                    drop(modules_option.take());
+                    let device = device_option.take().unwrap();
+                    device.drain_work();
+                    device.attempt_destroy().unwrap();
+                }
                 _ => (),
             }
         });
@@ -210,17 +237,26 @@ fn main() {
 unsafe fn make_graph(
     swapchain: &object::Swapchain,
     queue: device::submission::Queue,
-    state: Arc<Mutex<ArcballCamera>>,
+    state: Arc<Mutex<Transform<RightHanded>>>,
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
     device: &device::OwnedDevice,
 ) -> Result<graph::graph::execute::CompiledGraph, Box<dyn Error>> {
-    let mut create_pipeline = |path: &str, needs_eval_fn: bool| {
-        let comp_module = modules.retrieve(path, needs_eval_fn, device).unwrap();
+    let whole_descriptor_pipeline_layout = {
+        let module = modules.retrieve("shaders/populate_grid.comp", true, device)?;
 
-        let pipeline_layout = ReflectedLayout::new(&[(&comp_module.spirv, &["main"], false)])
-            .create(device, vk::DescriptorSetLayoutCreateFlags::empty())
-            .unwrap();
+        ReflectedLayout::new(&[SpirvModule {
+            spirv: &module.spirv,
+            entry_points: &["main"],
+            dynamic_uniform_buffers: true,
+            dynamic_storage_buffers: false,
+            include_unused_descriptors: true,
+        }])
+        .create(device, vk::DescriptorSetLayoutCreateFlags::empty())?
+    };
+
+    let mut create_pipeline = |path: &str, needs_eval_fn: bool| -> Result<_, Box<dyn Error>> {
+        let comp_module = modules.retrieve(path, needs_eval_fn, device)?;
 
         let pipeline_info = object::ComputePipelineCreateInfo {
             flags: vk::PipelineCreateFlags::empty(),
@@ -231,108 +267,114 @@ unsafe fn make_graph(
                 name: "main".into(),
                 specialization_info: None,
             },
-            layout: pipeline_layout,
+            layout: whole_descriptor_pipeline_layout.clone(),
             base_pipeline: object::BasePipeline::None,
         };
 
-        device.create_compute_pipeline(pipeline_info).unwrap()
+        Ok(device.create_compute_pipeline(pipeline_info)?)
     };
 
     let create_image = |format: vk::Format, size: object::Extent, label: &'static str| {
-        device
-            .create_image(
-                object::ImageCreateInfo {
-                    flags: vk::ImageCreateFlags::empty(),
-                    size,
-                    format,
-                    samples: vk::SampleCountFlags::C1,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    usage: vk::ImageUsageFlags::STORAGE,
-                    sharing_mode_concurrent: false,
-                    initial_layout: vk::ImageLayout::UNDEFINED,
-                    label: Some(label.into()),
-                },
-                vma::AllocationCreateInfo {
-                    flags: vma::AllocationCreateFlags::empty(),
-                    usage: vma::MemoryUsage::AutoPreferDevice,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
+        device.create_image(
+            object::ImageCreateInfo {
+                flags: vk::ImageCreateFlags::empty(),
+                size,
+                format,
+                samples: vk::SampleCountFlags::C1,
+                mip_levels: 1,
+                array_layers: 1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::STORAGE,
+                sharing_mode_concurrent: false,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                label: Some(label.into()),
+            },
+            vma::AllocationCreateInfo {
+                flags: vma::AllocationCreateFlags::empty(),
+                usage: vma::MemoryUsage::AutoPreferDevice,
+                ..Default::default()
+            },
+        )
     };
 
     let create_buffer = |usage: vk::BufferUsageFlags, size: u64, label: &'static str| {
-        device
-            .create_buffer(
-                object::BufferCreateInfo {
-                    flags: vk::BufferCreateFlags::empty(),
-                    size,
-                    usage,
-                    sharing_mode_concurrent: false,
-                    label: Some(label.into()),
-                },
-                vma::AllocationCreateInfo {
-                    flags: vma::AllocationCreateFlags::empty(),
-                    usage: vma::MemoryUsage::AutoPreferDevice,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
+        device.create_buffer(
+            object::BufferCreateInfo {
+                flags: vk::BufferCreateFlags::empty(),
+                size,
+                usage,
+                sharing_mode_concurrent: false,
+                label: Some(label.into()),
+            },
+            vma::AllocationCreateInfo {
+                flags: vma::AllocationCreateFlags::empty(),
+                usage: vma::MemoryUsage::AutoPreferDevice,
+                ..Default::default()
+            },
+        )
     };
 
-    let populate_grid = create_pipeline("shaders/populate_grid.comp", true);
-    let intersect = create_pipeline("shaders/intersect.comp", true);
-    let compute_vertex = create_pipeline("shaders/compute_vertex.comp", false);
-    let emit_triangles = create_pipeline("shaders/emit_triangles.comp", false);
+    let populate_grid = create_pipeline("shaders/populate_grid.comp", true)?;
+    let intersect = create_pipeline("shaders/intersect.comp", true)?;
+    let compute_vertex = create_pipeline("shaders/compute_vertex.comp", true)?;
+    let emit_triangles = create_pipeline("shaders/emit_triangles.comp", false)?;
 
     let function_values = create_image(
         vk::Format::R16_SFLOAT,
         object::Extent::D3(64, 64, 64),
         "function_values",
-    );
+    )?;
     let intersections = create_image(
         vk::Format::R8G8B8A8_UNORM,
         object::Extent::D3(64 * 3, 64, 64),
         "intersections",
-    );
+    )?;
     let vertex_indices = create_image(
         vk::Format::R32_UINT,
         object::Extent::D3(64, 64, 64),
         "vertex_indices",
-    );
+    )?;
+
+    const INDEX_CAPACITY: u32 = 1024 * 1024;
+    const VERTEX_CAPACITY: u32 = 1024 * 512;
 
     let vertices = create_buffer(
         vk::BufferUsageFlags::TRANSFER_SRC
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::VERTEX_BUFFER,
-        3 * 4 * 1024 * 512,
+        (VERTEX_CAPACITY * 3 * 4) as u64,
         "vertices",
-    );
+    )?;
     let indices = create_buffer(
         vk::BufferUsageFlags::TRANSFER_SRC
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::INDEX_BUFFER,
-        4 * 1024 * 1024,
+        (INDEX_CAPACITY * 4) as u64,
         "indices",
-    );
+    )?;
 
-    let vert_module = modules
-        .retrieve("shaders/mesh.vert", false, device)
-        .unwrap();
-    let frag_module = modules
-        .retrieve("shaders/mesh.frag", false, device)
-        .unwrap();
+    let vert_module = modules.retrieve("shaders/mesh.vert", false, device)?;
+    let frag_module = modules.retrieve("shaders/mesh.frag", false, device)?;
 
     let pipeline_layout = ReflectedLayout::new(&[
-        (&vert_module.spirv, &["main"], false),
-        (&frag_module.spirv, &["main"], false),
+        SpirvModule {
+            spirv: &vert_module.spirv,
+            entry_points: &["main"],
+            dynamic_uniform_buffers: true,
+            dynamic_storage_buffers: false,
+            include_unused_descriptors: false,
+        },
+        SpirvModule {
+            spirv: &frag_module.spirv,
+            entry_points: &["main"],
+            dynamic_uniform_buffers: true,
+            dynamic_storage_buffers: false,
+            include_unused_descriptors: false,
+        },
     ])
-    .create(&device, vk::DescriptorSetLayoutCreateFlags::empty())
-    .unwrap();
+    .create(&device, vk::DescriptorSetLayoutCreateFlags::empty())?;
 
     let pipeline_info = object::GraphicsPipelineCreateInfo::builder()
         .stages([
@@ -363,16 +405,25 @@ unsafe fn make_graph(
         .vertex_input(object::state::VertexInput {
             vertex_bindings: [object::state::InputBinding {
                 binding: 0,
-                stride: 3 * 4,
+                // 3 floats for position, 1 uint for B10G11R11 normal
+                stride: 3 * 4 + 4,
                 input_rate: vk::VertexInputRate::VERTEX,
             }]
             .to_vec(),
-            vertex_attributes: [object::state::InputAttribute {
-                location: 0,
-                binding: 0,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
-            }]
+            vertex_attributes: [
+                object::state::InputAttribute {
+                    location: 0,
+                    binding: 0,
+                    format: vk::Format::R32G32B32_SFLOAT,
+                    offset: 0,
+                },
+                object::state::InputAttribute {
+                    location: 1,
+                    binding: 0,
+                    format: vk::Format::A2B10G10R10_SNORM_PACK32,
+                    offset: 3 * 4,
+                },
+            ]
             .to_vec(),
         })
         .rasterization(object::state::Rasterization {
@@ -389,8 +440,8 @@ unsafe fn make_graph(
             ..Default::default()
         })
         .depth_stencil(object::state::DepthStencil {
-            depth_test_enable: false,
-            depth_write_enable: false,
+            depth_test_enable: true,
+            depth_write_enable: true,
             depth_compare_op: vk::CompareOp::LESS,
             depth_bounds_test_enable: false,
             stencil_test_enable: false,
@@ -420,8 +471,110 @@ unsafe fn make_graph(
         let vertices = b.import_buffer((vertices, "vertices"));
         let indices = b.import_buffer((indices, "indices"));
 
-        let swapchain_size = swapchain.get_extent();
+        struct GlobalDescriptorData {
+            set: vk::DescriptorSet,
+            dynamic_offsets: SmallVec<[u32; 4]>,
+        }
 
+        let whole_descriptor_pipeline_layout_copy = whole_descriptor_pipeline_layout.clone();
+        let get_or_create_descriptor =
+            move |e: &GraphExecutor, device: &Device| -> GlobalDescriptorData {
+                // layout(binding = 0, r16) uniform image3D function_values;
+                // layout(binding = 1, rgba8) uniform image3D intersections;
+                // layout(binding = 2, r32ui) uniform uimage3D vertex_indices;
+                // layout(binding = 3, scalar) buffer VertexData {
+                //     uint size;
+                //     uint offset;
+                // 	Vertex vertices[];
+                // } vertices;
+                // layout(binding = 4, scalar) buffer IndexData {
+                //     uint size;
+                //     uint offset;
+                // 	uint indices[];
+                // } indices;
+                // layout(binding = 5, scalar) uniform FunctionData {
+                // 	uvec3 size;
+                //     vec3 offset;
+                //     float scale;
+                //     float time;
+                // } function_data;
+
+                struct PushConstant {
+                    size: [u32; 3],
+                    offset: [f32; 3],
+                    scale: f32,
+                    time: f32,
+                }
+
+                let data = PushConstant {
+                    size: [64; 3],
+                    offset: [0.0; 3],
+                    scale: 1.0,
+                    // TODO plumb around a common elapsed time and delta
+                    time: 0.0,
+                };
+
+                let uniform = e.allocate_uniform_element(&data);
+
+                let (set, dynamic_offsets) = DescSetBuilder::new(
+                    &whole_descriptor_pipeline_layout_copy.get_descriptor_set_layouts()[0],
+                )
+                .update_whole(&[
+                    DescriptorData::Image(DescImage {
+                        view: e.get_default_image_view(function_values),
+                        layout: vk::ImageLayout::GENERAL,
+                        ..Default::default()
+                    }),
+                    DescriptorData::Image(DescImage {
+                        view: e.get_default_image_view(intersections),
+                        layout: vk::ImageLayout::GENERAL,
+                        ..Default::default()
+                    }),
+                    DescriptorData::Image(DescImage {
+                        view: e.get_default_image_view(vertex_indices),
+                        layout: vk::ImageLayout::GENERAL,
+                        ..Default::default()
+                    }),
+                    DescriptorData::Buffer(DescBuffer {
+                        buffer: e.get_buffer(vertices),
+                        ..Default::default()
+                    }),
+                    DescriptorData::Buffer(DescBuffer {
+                        buffer: e.get_buffer(indices),
+                        ..Default::default()
+                    }),
+                    DescriptorData::Buffer(DescBuffer {
+                        buffer: uniform.buffer,
+                        dynamic_offset: Some(uniform.dynamic_offset),
+                        ..Default::default()
+                    }),
+                ])
+                .finish(e)
+                .into_raw();
+
+                GlobalDescriptorData {
+                    set,
+                    dynamic_offsets,
+                }
+            };
+
+        let bind_descriptor = move |e: &GraphExecutor, device: &Device| {
+            let mut blackboard = e.execution_blackboard_mut();
+            let data = blackboard.get_or_insert_with::<GlobalDescriptorData, _>(|| {
+                get_or_create_descriptor(e, device)
+            });
+
+            device.device().cmd_bind_descriptor_sets(
+                e.command_buffer(),
+                vk::PipelineBindPoint::COMPUTE,
+                whole_descriptor_pipeline_layout.raw(),
+                0,
+                &[data.set],
+                &data.dynamic_offsets,
+            )
+        };
+
+        let swapchain_size = swapchain.get_extent();
         let depth = b.create_image(
             object::ImageCreateInfo {
                 flags: vk::ImageCreateFlags::empty(),
@@ -460,9 +613,6 @@ unsafe fn make_graph(
             },
         );
         let swapchain = b.acquire_swapchain(swapchain.clone());
-
-        const INDEX_CAPACITY: u32 = 1024 * 512;
-        const VERTEX_CAPACITY: u32 = 1024 * 512;
 
         b.add_pass(
             queue,
@@ -510,6 +660,7 @@ unsafe fn make_graph(
             "Reset buffer bump allocators",
         );
 
+        let bind_descriptor_copy = bind_descriptor.clone();
         b.add_pass(
             queue,
             LambdaPass(
@@ -524,48 +675,12 @@ unsafe fn make_graph(
                         None,
                     );
                 },
-                move |e, d| {
-                    let (d, cmd) = (d.device(), e.command_buffer());
+                move |e, device| {
+                    let (d, cmd) = (device.device(), e.command_buffer());
                     d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, populate_grid.raw());
 
-                    let pipeline_layout = populate_grid.get_pipeline_layout();
-                    let set_layout = &pipeline_layout.get_descriptor_set_layouts()[0];
+                    bind_descriptor_copy(e, device);
 
-                    DescSetBuilder::new(set_layout)
-                        .update_image_binding(
-                            0,
-                            0,
-                            &DescImage {
-                                sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(function_values),
-                                layout: vk::ImageLayout::GENERAL,
-                            },
-                        )
-                        .finish(e)
-                        .bind(vk::PipelineBindPoint::COMPUTE, pipeline_layout, e);
-
-                    struct PushConstant {
-                        size: [u32; 3],
-                        offset: [f32; 3],
-                        scale: f32,
-                        time: f32,
-                    }
-
-                    let data = PushConstant {
-                        size: [64; 3],
-                        offset: [0.0; 3],
-                        scale: 1.0,
-                        time: 0.0,
-                    };
-
-                    d.cmd_push_constants(
-                        cmd,
-                        pipeline_layout.raw(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        std::mem::size_of::<PushConstant>() as u32,
-                        (&data as *const PushConstant).cast(),
-                    );
                     let count = 64 / 4;
                     d.cmd_dispatch(cmd, count, count, count);
                 },
@@ -573,6 +688,7 @@ unsafe fn make_graph(
             "Populate grid",
         );
 
+        let bind_descriptor_copy = bind_descriptor.clone();
         b.add_pass(
             queue,
             LambdaPass(
@@ -595,49 +711,12 @@ unsafe fn make_graph(
                         None,
                     );
                 },
-                move |e, d| {
-                    let (d, cmd) = (d.device(), e.command_buffer());
+                move |e, device| {
+                    let (d, cmd) = (device.device(), e.command_buffer());
                     d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, intersect.raw());
 
-                    let pipeline_layout = intersect.get_pipeline_layout();
-                    let set_layout = &pipeline_layout.get_descriptor_set_layouts()[0];
+                    bind_descriptor_copy(e, device);
 
-                    DescSetBuilder::new(set_layout)
-                        .update_image_binding(
-                            0,
-                            0,
-                            &DescImage {
-                                sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(function_values),
-                                layout: vk::ImageLayout::GENERAL,
-                            },
-                        )
-                        .update_image_binding(
-                            1,
-                            0,
-                            &DescImage {
-                                sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(intersections),
-                                layout: vk::ImageLayout::GENERAL,
-                            },
-                        )
-                        .finish(e)
-                        .bind(vk::PipelineBindPoint::COMPUTE, pipeline_layout, e);
-
-                    struct PushConstant {
-                        time: f32,
-                    }
-
-                    let data = PushConstant { time: 0.0 };
-
-                    d.cmd_push_constants(
-                        cmd,
-                        pipeline_layout.raw(),
-                        vk::ShaderStageFlags::COMPUTE,
-                        0,
-                        std::mem::size_of::<PushConstant>() as u32,
-                        (&data as *const PushConstant).cast(),
-                    );
                     let count = 64 / 4;
                     d.cmd_dispatch(cmd, count * 3, count, count);
                 },
@@ -645,6 +724,7 @@ unsafe fn make_graph(
             "Intersect cell edges",
         );
 
+        let bind_descriptor_copy = bind_descriptor.clone();
         b.add_pass(
             queue,
             LambdaPass(
@@ -674,42 +754,11 @@ unsafe fn make_graph(
                             | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                     );
                 },
-                move |e, d| {
-                    let (d, cmd) = (d.device(), e.command_buffer());
+                move |e, device| {
+                    let (d, cmd) = (device.device(), e.command_buffer());
                     d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, compute_vertex.raw());
 
-                    let pipeline_layout = compute_vertex.get_pipeline_layout();
-                    let set_layout = &pipeline_layout.get_descriptor_set_layouts()[0];
-
-                    DescSetBuilder::new(set_layout)
-                        .update_image_binding(
-                            0,
-                            0,
-                            &DescImage {
-                                sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(intersections),
-                                layout: vk::ImageLayout::GENERAL,
-                            },
-                        )
-                        .update_image_binding(
-                            1,
-                            0,
-                            &DescImage {
-                                sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(vertex_indices),
-                                layout: vk::ImageLayout::GENERAL,
-                            },
-                        )
-                        .update_buffer_binding(
-                            2,
-                            0,
-                            &DescBuffer {
-                                buffer: e.get_buffer(vertices),
-                                ..Default::default()
-                            },
-                        )
-                        .finish(e)
-                        .bind(vk::PipelineBindPoint::COMPUTE, pipeline_layout, e);
+                    bind_descriptor_copy(e, device);
 
                     let count = 64 / 4;
                     d.cmd_dispatch(cmd, count, count, count);
@@ -718,6 +767,7 @@ unsafe fn make_graph(
             "Compute cell vertices",
         );
 
+        let bind_descriptor_copy = bind_descriptor.clone();
         b.add_pass(
             queue,
             LambdaPass(
@@ -751,42 +801,11 @@ unsafe fn make_graph(
                         vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                     );
                 },
-                move |e, d| {
-                    let (d, cmd) = (d.device(), e.command_buffer());
+                move |e, device| {
+                    let (d, cmd) = (device.device(), e.command_buffer());
                     d.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, emit_triangles.raw());
 
-                    let pipeline_layout = emit_triangles.get_pipeline_layout();
-                    let set_layout = &pipeline_layout.get_descriptor_set_layouts()[0];
-
-                    DescSetBuilder::new(set_layout)
-                        .update_image_binding(
-                            0,
-                            0,
-                            &DescImage {
-                                sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(function_values),
-                                layout: vk::ImageLayout::GENERAL,
-                            },
-                        )
-                        .update_image_binding(
-                            1,
-                            0,
-                            &DescImage {
-                                sampler: vk::Sampler::null(),
-                                view: e.get_default_image_view(vertex_indices),
-                                layout: vk::ImageLayout::GENERAL,
-                            },
-                        )
-                        .update_buffer_binding(
-                            2,
-                            0,
-                            &DescBuffer {
-                                buffer: e.get_buffer(indices),
-                                ..Default::default()
-                            },
-                        )
-                        .finish(e)
-                        .bind(vk::PipelineBindPoint::COMPUTE, pipeline_layout, e);
+                    bind_descriptor_copy(e, device);
 
                     let count = 64 / 4;
                     d.cmd_dispatch(cmd, count, count, count);
@@ -853,7 +872,7 @@ unsafe fn make_graph(
                 vertices,
                 indices,
                 draw_parameter_buffer,
-                angles: state.clone(),
+                transform: state.clone(),
             },
             "Draw triangles",
         );
@@ -889,7 +908,7 @@ unsafe fn make_device(
             pumice::cstr!("VK_LAYER_KHRONOS_validation"),
             // pumice::cstr!("VK_LAYER_LUNARG_api_dump"),
         ],
-        enable_debug_callback: false,
+        enable_debug_callback: true,
         debug_labeling: true,
         app_name: "test application".to_owned(),
         verbose: false,
@@ -957,6 +976,25 @@ unsafe fn make_swapchain(
         }
     };
 
+    let (present_modes, result) = device
+        .instance()
+        .handle()
+        .get_physical_device_surface_present_modes_khr(
+            device.physical_device(),
+            surface.handle(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(result, vk::Result::SUCCESS);
+
+    let mut present_mode = vk::PresentModeKHR::FIFO;
+    for mode in present_modes {
+        if mode == vk::PresentModeKHR::MAILBOX {
+            present_mode = vk::PresentModeKHR::MAILBOX;
+            break;
+        }
+    }
+
     // TODO swapchain configuration fallback for formats, present modes, and color spaces
     let info = SwapchainCreateInfo {
         surface: surface.into_raw(),
@@ -969,7 +1007,7 @@ unsafe fn make_swapchain(
         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
         pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
         composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-        present_mode: vk::PresentModeKHR::FIFO,
+        present_mode,
         clipped: false,
     };
 

@@ -75,7 +75,6 @@ impl ShaderModules {
         .unwrap();
 
         let thread = std::thread::spawn(move || {
-            return;
             use std::io::Write;
 
             let path = PathBuf::from_str(&rust_target_dir())
@@ -124,7 +123,9 @@ impl ShaderModules {
 
         Self {
             eval_fn: make_density_function(
-                "(1.0 / sqrt(pow((x-32.0)*0.01, 2.0) + pow((y-32.0)*0.01, 2.0))) - z",
+                // "sin(0.25 * sqrt((x-32.0)*(x-32.0) + (y-32.0)*(y-32.0))) * 10 + 40 - z",
+                // "1/(0.01*sqrt((x-32.0)*(x-32.0) + (y-32.0)*(y-32.0))) - z",
+                "0.0",
             ),
             modules: Default::default(),
             watcher,

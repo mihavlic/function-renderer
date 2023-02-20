@@ -1,7 +1,7 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
 
-#define USE_SUBGROUP_OPS
+// #define USE_SUBGROUP_OPS
 
 #ifdef USE_SUBGROUP_OPS
     #extension GL_KHR_shader_subgroup_basic : enable
@@ -9,13 +9,35 @@
     #extension GL_KHR_shader_subgroup_ballot : enable
 #endif
 
-layout (set = 0, binding = 0, rgba8) uniform readonly image3D intersections;
-layout (set = 0, binding = 1, r32ui) uniform writeonly uimage3D vertex_indices;
-layout(set = 0, binding = 2, scalar) buffer vertexData {
+
+////// input descriptors, keep this synchronized //////
+
+struct Vertex {
+    vec3 position; 
+    uint packed_normal;
+};
+
+layout(binding = 0, r16) uniform image3D function_values;
+layout(binding = 1, rgba8) uniform image3D intersections;
+layout(binding = 2, r32ui) uniform uimage3D vertex_indices;
+layout(binding = 3, scalar) buffer VertexData {
     uint size;
     uint offset;
-	vec3 vertices[];
+	Vertex vertices[];
 } vertices;
+layout(binding = 4, scalar) buffer IndexData {
+    uint size;
+    uint offset;
+	uint indices[];
+} indices;
+layout(binding = 5, scalar) uniform FunctionData {
+	uvec3 size;
+    vec3 offset;
+    float scale;
+    float time;
+} function_data;
+
+/////////////////////////////////
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
@@ -24,6 +46,33 @@ const uvec3[] axes = {
     {0,1,0},
     {0,0,1}
 };
+
+float density(vec4 data);
+
+// compute the gradient of the function using finite differences
+// FIXME code duplication
+vec3 calculate_gradient(vec3 pos) {
+    const float d = 2.0;
+    
+    float x = pos.x;
+    float y = pos.y;
+    float z = pos.z;
+    float t = function_data.time;
+
+#if 0
+    float origin = density(vec4(pos, function_data.time));
+
+    float dx = (density(vec4(x + d, y, z, t)) - origin) / d;
+    float dy = (density(vec4(x, y + d, z, t)) - origin) / d;
+    float dz = (density(vec4(x, y, z + d, t)) - origin) / d;
+#else
+    float dx = (density(vec4(x + d, y, z, t)) - density(vec4(x - d, y, z, t))) / (2.0 * d);
+    float dy = (density(vec4(x, y + d, z, t)) - density(vec4(x, y - d, z, t))) / (2.0 * d);
+    float dz = (density(vec4(x, y, z + d, t)) - density(vec4(x, y, z - d, t))) / (2.0 * d);
+#endif
+
+    return vec3(dx, dy, dz);
+}
 
 float plane_distance(vec3 normal, vec3 intersection, vec3 point) {
     // ax + by + cz - q = 0
@@ -36,6 +85,24 @@ vec4 get_edge(uvec3 pos, uint axis) {
     uvec3 index = uvec3(pos.x * 3 + axis, pos.yz);
     // uvec3 index = uvec3(pos.x + axis * 64, pos.yz);
     return imageLoad(intersections, ivec3(index));
+}
+
+// stolen from https://www.gamedev.net/forums/topic/685081-normal-vector-artifacts-with-nvmeshmender/
+uint pack_A2B10G10R10_SNORM_PACK32(vec4 vector) {
+    vec4 c = clamp(vector, -1.0, 1.0);
+
+    const uint xs = c.x < 0.0 ? 1 : 0;
+    const uint ys = c.y < 0.0 ? 1 : 0;
+    const uint zs = c.z < 0.0 ? 1 : 0;
+    const uint ws = c.w < 0.0 ? 1 : 0;
+
+    uvec4 a = uvec4(abs(c) * vec4(512.0, 512.0, 512.0, 1.0));
+
+    return 
+        ws << 31 | a.w << 30 |
+        zs << 29 | a.z << 20 |
+        ys << 19 | a.y << 10 |
+        xs <<  9 | a.x;
 }
 
 const uint INDEX_INVALID = 4294967295;
@@ -143,21 +210,25 @@ void main() {
     vec3 cellspace_vertex = intersections_sum / float(intersections_count);
 
     // iteratively move the point according to the distance to the intersection planes
-    // for (int iter = 0; iter < 5; iter++) {
-    //     vec3 force = vec3(0.0);
-    //     for (int i = 0; i < 12; i++) {
-    //         vec4 intersection = edges[i];
-    //         if (intersection.w != 0.0) {
-    //             vec3 normal = intersection.xyz;
-    //             float q = intersection_planes_q[i];
+    for (int iter = 0; iter < 15; iter++) {
+        vec3 force = vec3(0.0);
+        for (int i = 0; i < 12; i++) {
+            vec4 intersection = edges[i];
+            if (intersection.w != 0.0) {
+                vec3 normal = intersection.xyz;
+                float q = intersection_planes_q[i];
 
-    //             float plane_distance = dot(normal, cellspace_vertex) + q;
-    //             force += plane_distance * normal;
-    //         }
+                float plane_distance = dot(normal, cellspace_vertex) + q;
+                force += plane_distance * normal;
+            }
 
-    //     }
-    //     cellspace_vertex += force / float(intersections_count);
-    // }
+        }
+        cellspace_vertex -= 
+            // move closer to the planes of the intersections
+            0.5 * (force / float(intersections_count)) + 
+            // nudge a tiny amount towards the cell center, allegedly it improves the quality
+            0.01 * (cellspace_vertex - vec3(0.5));
+    }
 
     // we are bump allocating vertices, a stream compaction pass would probably be more efficient
     // but it seems to be very complicated and no very worth it at this stage
@@ -186,10 +257,17 @@ void main() {
     uint index = atomicAdd(vertices.offset, 1);
 #endif
 
-    vec3 vertex = cellspace_vertex + vec3(A);
-
     // if we've reached the capacity of the vertex buffer, just throw away the vertex
     if (index < vertices.size) {
+        vec3 position = vec3(A) + cellspace_vertex;
+        vec3 normal = normalize(calculate_gradient(position));
+        uint packed_normal = pack_A2B10G10R10_SNORM_PACK32(vec4(normal, 0.0));
+
+        Vertex vertex = {
+            position,
+            packed_normal,
+        };
+
         vertices.vertices[index] = vertex;
         imageStore(vertex_indices, ivec3(global_id.xyz), uvec4(index));
     }

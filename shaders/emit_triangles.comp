@@ -1,19 +1,43 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
 
+// #define USE_SUBGROUP_OPS
+
 #ifdef USE_SUBGROUP_OPS
     #extension GL_KHR_shader_subgroup_basic : enable
     #extension GL_KHR_shader_subgroup_arithmetic : enable
     #extension GL_KHR_shader_subgroup_ballot : enable
 #endif
 
-layout (set = 0, binding = 0, r16) uniform readonly image3D function_values;
-layout (set = 0, binding = 1, r32ui) uniform readonly uimage3D vertex_indices;
-layout(set = 0, binding = 2, scalar) buffer indexData {
+////// input descriptors, keep this synchronized //////
+
+struct Vertex {
+    vec3 position; 
+    uint packed_normal;
+};
+
+layout(binding = 0, r16) uniform image3D function_values;
+layout(binding = 1, rgba8) uniform image3D intersections;
+layout(binding = 2, r32ui) uniform uimage3D vertex_indices;
+layout(binding = 3, scalar) buffer VertexData {
+    uint size;
+    uint offset;
+	Vertex vertices[];
+} vertices;
+layout(binding = 4, scalar) buffer IndexData {
     uint size;
     uint offset;
 	uint indices[];
 } indices;
+layout(binding = 5, scalar) uniform FunctionData {
+	uvec3 size;
+    vec3 offset;
+    float scale;
+    float time;
+} function_data;
+
+/////////////////////////////////
+
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
@@ -33,6 +57,12 @@ uint get_cell_vertex_index(uvec3 pos) {
     return imageLoad(vertex_indices, ivec3(pos)).x;
 }
 
+vec4 get_edge(uvec3 pos, uint axis) {
+    uvec3 index = uvec3(pos.x * 3 + axis, pos.yz);
+    // uvec3 index = uvec3(pos.x + axis * 64, pos.yz);
+    return imageLoad(intersections, ivec3(index));
+}
+
 void main() {
     uvec3 global_id = gl_GlobalInvocationID.xyz;
 
@@ -48,7 +78,7 @@ void main() {
     //   |/___________|/         A/___________B        |/___ x
     //          0
 
-    if (global_id.x >= 63 || global_id.y >= 63 || global_id.z >= 63) {
+    if (global_id.x >= 62 || global_id.y >= 62 || global_id.z >= 62) {
         return;
     }
 
@@ -59,36 +89,24 @@ void main() {
     }
 
     uvec3 A = global_id;
-    uvec3 B = A + uvec3(1, 0, 0);
     uvec3 C = A + uvec3(1, 1, 0);
-    uvec3 D = A + uvec3(0, 1, 0);
-    uvec3 G = A + uvec3(1, 1, 1);
-    
-    bool signs[4] = {
-        vertex_is_positive(B),
-        vertex_is_positive(C),
-        vertex_is_positive(D),
-        vertex_is_positive(G)
-    };
+    uvec3 F = A + uvec3(1, 0, 1);
+    uvec3 H = A + uvec3(0, 1, 1);
 
-    if (signs[0] == signs[1] && signs[1] == signs[2] && signs[2] == signs[3]) {
-        return;
-    }
-
-    uvec2 edges[3] = {
-        {0, 1},
-        {1, 2},
-        {1, 3}
+    vec4 edges[3] = {
+        get_edge(H, 0),
+        get_edge(F, 1),
+        get_edge(C, 2),
     };
     
     int triangle_indices_offset = 0;
     uint triangle_indices[3 * 6];
 
     for (int axis = 0; axis < 3; axis++) {
-        uvec2 edge = edges[axis];
+        vec4 edge = edges[axis];
 
-        if (signs[edge.x] == signs[edge.y]) {
-            // no intersection
+        // no intersection
+        if (edge.w == 0.0) {
             continue;
         }
         
@@ -108,13 +126,13 @@ void main() {
             v3 = get_cell_vertex_index(A + uvec3(1,1,0));
         }
         
-        if (v1 == INDEX_INVALID || v2 == INDEX_INVALID || v3 == INDEX_INVALID)
-        {
-            // Shouldn't ever happen
-            // kinda can't do error reporting from the shader
-            // also this may happen when we've run out ofspace in the vertex buffer in the previous pass
-            continue;
-        }
+        // if (v1 == INDEX_INVALID || v2 == INDEX_INVALID || v3 == INDEX_INVALID)
+        // {
+        //     // Shouldn't ever happen
+        //     // kinda can't do error reporting from the shader
+        //     // also this may happen when we've run out ofspace in the vertex buffer in the previous pass
+        //     continue;
+        // }
 
         int o = triangle_indices_offset;
         triangle_indices[o + 0] = v0;

@@ -62,6 +62,7 @@ pub enum UnaryOperation {
     ArcCos,
     ArcTan,
     ArcCotan,
+    Length,
 }
 
 impl UnaryOperation {
@@ -80,6 +81,7 @@ impl UnaryOperation {
             "sqrt" => Some(Self::Sqrt),
             "tan" => Some(Self::Tan),
             "abs" => Some(Self::Abs),
+            "length" => Some(Self::Length),
             _ => None,
         }
     }
@@ -99,6 +101,7 @@ impl UnaryOperation {
             UnaryOperation::ArcCos => "arccos",
             UnaryOperation::ArcTan => "arctan",
             UnaryOperation::ArcCotan => "arccotan",
+            UnaryOperation::Length => "length",
         }
     }
 }
@@ -564,6 +567,7 @@ pub fn array_eval(node: &Expression, x: &Lane, y: &Lane, z: &Lane, t: f32, out: 
                     ArcCos => a.acos(),
                     ArcTan => a.atan(),
                     ArcCotan => std::f32::consts::FRAC_2_PI - a.atan(),
+                    Length => panic!(),
                 }
             );
         }
