@@ -5,6 +5,7 @@ mod hotreaload;
 mod mesh_pass;
 mod parser;
 mod pass;
+pub mod recomputation;
 mod write;
 mod yawpitch;
 
@@ -16,6 +17,7 @@ use std::error::Error;
 use std::f32::consts::FRAC_PI_2;
 use std::fmt::Display;
 use std::fs::File;
+use std::hash::Hash;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -41,7 +43,7 @@ use graph::passes::{self, ClearImage, SimpleShader};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma::{self};
-use hotreaload::ShaderModules;
+use hotreaload::{PollResult, ShaderModules};
 use mesh_pass::ArcBallAngles;
 use notify::event::{DataChange, ModifyKind};
 use notify::Watcher;
@@ -49,6 +51,7 @@ use pass::LambdaPass;
 use pumice::util::ObjectHandle;
 use pumice::VulkanResult;
 use pumice::{util::ApiLoadConfig, vk};
+use recomputation::RecomputationCache;
 use winit::event::{
     DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
 };
@@ -74,6 +77,7 @@ fn main() {
         let swapchain = make_swapchain(&window, surface, &device);
 
         let mut modules = ShaderModules::new();
+        let mut cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
 
         let mut camera: CameraRig = CameraRig::builder()
@@ -92,6 +96,7 @@ fn main() {
             transform.clone(),
             &mut modules,
             &mut compiler,
+            &mut cache,
             &device,
         )
         .unwrap();
@@ -104,21 +109,14 @@ fn main() {
         let mut device_option = Some(device);
         let mut swapchain_option = Some(swapchain);
         let mut modules_option = Some(modules);
+        let mut cache_option = Some(cache);
 
         event_loop.run(move |event, _, control_flow| {
             let mut graph = graph_option.as_mut().unwrap();
             let mut device = device_option.as_mut().unwrap();
             let mut swapchain = swapchain_option.as_mut().unwrap();
             let mut modules = modules_option.as_mut().unwrap();
-
-            control_flow.set_poll();
-
-            let dt = prev.elapsed().as_secs_f32();
-            {
-                *transform.lock().unwrap() = camera.update(dt);
-            }
-
-            prev = std::time::Instant::now();
+            let mut cache = cache_option.as_mut().unwrap();
 
             match event {
                 Event::DeviceEvent { device_id, event } => match event {
@@ -168,38 +166,17 @@ fn main() {
                     window.request_redraw();
                 }
                 Event::RedrawRequested(req) => {
-                    macro_rules! rebuild_graph {
-                        () => {{
-                            let result = make_graph(
-                                &swapchain,
-                                queue,
-                                transform.clone(),
-                                &mut modules,
-                                &mut compiler,
-                                &device,
-                            );
+                    control_flow.set_poll();
 
-                            match result {
-                                Ok(ok) => {
-                                    graph_option = Some(ok);
-                                    graph = graph_option.as_mut().unwrap();
-                                }
-                                Err(err) => {
-                                    eprintln!("Compilation error: {err}");
-                                }
-                            };
-                        }};
+                    let dt = prev.elapsed().as_secs_f32();
+                    {
+                        *transform.lock().unwrap() = camera.update(dt);
                     }
 
-                    match modules.poll() {
-                        hotreaload::PollResult::Recreate => {
-                            rebuild_graph!();
-                        }
-                        hotreaload::PollResult::Continue => {}
-                        hotreaload::PollResult::Exit => {
-                            control_flow.set_exit();
-                        }
-                    }
+                    prev = std::time::Instant::now();
+
+                    let mut exit = false;
+                    let mut rebuild_graph = false;
 
                     let size = window.inner_size();
                     if !(window.is_visible() == Some(false) || size.width == 0 || size.height == 0)
@@ -212,18 +189,54 @@ fn main() {
                         match result {
                             GraphRunStatus::Ok => {}
                             GraphRunStatus::SwapchainAcquireTimeout => {}
-                            GraphRunStatus::SwapchainRecreated => rebuild_graph!(),
+                            GraphRunStatus::SwapchainRecreated => rebuild_graph = true,
                         }
 
-                        // throttle to reach ~60 fps
-                        control_flow.set_wait_timeout(Duration::from_micros(1_000_000 / 60))
+                        if let Some(remaining) =
+                            Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
+                        {
+                            std::thread::sleep(remaining);
+                        }
                     }
                     device.idle_cleanup_poll();
+
+                    match modules.poll() {
+                        PollResult::Recreate => rebuild_graph = true,
+                        PollResult::Continue => {}
+                        PollResult::Exit => exit = true,
+                    }
+
+                    if rebuild_graph && !exit {
+                        let result = make_graph(
+                            &swapchain,
+                            queue,
+                            transform.clone(),
+                            &mut modules,
+                            &mut compiler,
+                            &mut cache,
+                            &device,
+                        );
+
+                        match result {
+                            Ok(ok) => {
+                                graph_option = Some(ok);
+                                graph = graph_option.as_mut().unwrap();
+                            }
+                            Err(err) => {
+                                eprintln!("Graph compilation error: {err}");
+                            }
+                        };
+                    }
+
+                    if exit {
+                        control_flow.set_exit();
+                    }
                 }
                 Event::LoopDestroyed => {
                     drop(graph_option.take());
                     drop(swapchain_option.take());
                     drop(modules_option.take());
+                    drop(cache_option.take());
                     let device = device_option.take().unwrap();
                     device.drain_work();
                     device.attempt_destroy().unwrap();
@@ -240,61 +253,89 @@ unsafe fn make_graph(
     state: Arc<Mutex<Transform<RightHanded>>>,
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
+    cache: &mut RecomputationCache,
     device: &device::OwnedDevice,
 ) -> Result<graph::graph::execute::CompiledGraph, Box<dyn Error>> {
-    let whole_descriptor_pipeline_layout = {
-        let module = modules.retrieve("shaders/populate_grid.comp", true, device)?;
+    // let density_function = cache.get_or_insert_named("density function", || {
+    //     "sin(sqrt(x*x + y*y + z*z) / 8.0)".to_string()
+    // });
+    let mut cache = RefCell::new(cache);
 
-        ReflectedLayout::new(&[SpirvModule {
-            spirv: &module.spirv,
-            entry_points: &["main"],
-            dynamic_uniform_buffers: true,
-            dynamic_storage_buffers: false,
-            include_unused_descriptors: true,
-        }])
-        .create(device, vk::DescriptorSetLayoutCreateFlags::empty())?
-    };
+    macro_rules! args {
+        ($($arg:expr),*) => {
+            |state| {
+                use std::hash::Hash;
+                $(
+                    $arg.hash(state);
+                )*
+            }
+        };
+    }
 
     let mut create_pipeline = |path: &str, needs_eval_fn: bool| -> Result<_, Box<dyn Error>> {
-        let comp_module = modules.retrieve(path, needs_eval_fn, device)?;
+        let module = modules.retrieve(path, needs_eval_fn, device)?;
+        let mut cache = cache.borrow_mut();
+        let all_layout =
+            cache.get_or_insert_named::<object::PipelineLayout, _>("all layout", || {
+                ReflectedLayout::new(&[SpirvModule {
+                    spirv: &module.spirv,
+                    entry_points: &["main"],
+                    dynamic_uniform_buffers: true,
+                    dynamic_storage_buffers: false,
+                    include_unused_descriptors: true,
+                }])
+                .create(device, vk::DescriptorSetLayoutCreateFlags::empty())
+                .unwrap()
+            });
 
-        let pipeline_info = object::ComputePipelineCreateInfo {
-            flags: vk::PipelineCreateFlags::empty(),
-            stage: PipelineStage {
-                flags: vk::PipelineShaderStageCreateFlags::empty(),
-                stage: vk::ShaderStageFlags::COMPUTE,
-                module: comp_module.module.clone(),
-                name: "main".into(),
-                specialization_info: None,
-            },
-            layout: whole_descriptor_pipeline_layout.clone(),
-            base_pipeline: object::BasePipeline::None,
-        };
+        let pipeline = cache.compute_located(args!(path), args!(module), || {
+            let pipeline_info = object::ComputePipelineCreateInfo {
+                flags: vk::PipelineCreateFlags::empty(),
+                stage: PipelineStage {
+                    flags: vk::PipelineShaderStageCreateFlags::empty(),
+                    stage: vk::ShaderStageFlags::COMPUTE,
+                    module: module.module.clone(),
+                    name: "main".into(),
+                    specialization_info: None,
+                },
+                layout: all_layout.into_inner(),
+                base_pipeline: object::BasePipeline::None,
+            };
 
-        Ok(device.create_compute_pipeline(pipeline_info)?)
+            device.create_compute_pipeline(pipeline_info).unwrap()
+        });
+
+        Ok(pipeline.into_inner())
     };
 
     let create_image = |format: vk::Format, size: object::Extent, label: &'static str| {
-        device.create_image(
-            object::ImageCreateInfo {
-                flags: vk::ImageCreateFlags::empty(),
-                size,
-                format,
-                samples: vk::SampleCountFlags::C1,
-                mip_levels: 1,
-                array_layers: 1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::STORAGE,
-                sharing_mode_concurrent: false,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                label: Some(label.into()),
-            },
-            vma::AllocationCreateInfo {
-                flags: vma::AllocationCreateFlags::empty(),
-                usage: vma::MemoryUsage::AutoPreferDevice,
-                ..Default::default()
-            },
-        )
+        let mut cache = cache.borrow_mut();
+        cache
+            .compute_named(label, args!(format, size), || {
+                device
+                    .create_image(
+                        object::ImageCreateInfo {
+                            flags: vk::ImageCreateFlags::empty(),
+                            size,
+                            format,
+                            samples: vk::SampleCountFlags::C1,
+                            mip_levels: 1,
+                            array_layers: 1,
+                            tiling: vk::ImageTiling::OPTIMAL,
+                            usage: vk::ImageUsageFlags::STORAGE,
+                            sharing_mode_concurrent: false,
+                            initial_layout: vk::ImageLayout::UNDEFINED,
+                            label: Some(label.into()),
+                        },
+                        vma::AllocationCreateInfo {
+                            flags: vma::AllocationCreateFlags::empty(),
+                            usage: vma::MemoryUsage::AutoPreferDevice,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+            })
+            .into_inner()
     };
 
     let create_buffer = |usage: vk::BufferUsageFlags, size: u64, label: &'static str| {
@@ -323,17 +364,17 @@ unsafe fn make_graph(
         vk::Format::R16_SFLOAT,
         object::Extent::D3(64, 64, 64),
         "function_values",
-    )?;
+    );
     let intersections = create_image(
         vk::Format::R8G8B8A8_UNORM,
         object::Extent::D3(64 * 3, 64, 64),
         "intersections",
-    )?;
+    );
     let vertex_indices = create_image(
         vk::Format::R32_UINT,
         object::Extent::D3(64, 64, 64),
         "vertex_indices",
-    )?;
+    );
 
     const INDEX_CAPACITY: u32 = 1024 * 1024;
     const VERTEX_CAPACITY: u32 = 1024 * 512;
@@ -358,107 +399,122 @@ unsafe fn make_graph(
     let vert_module = modules.retrieve("shaders/mesh.vert", false, device)?;
     let frag_module = modules.retrieve("shaders/mesh.frag", false, device)?;
 
-    let pipeline_layout = ReflectedLayout::new(&[
-        SpirvModule {
-            spirv: &vert_module.spirv,
-            entry_points: &["main"],
-            dynamic_uniform_buffers: true,
-            dynamic_storage_buffers: false,
-            include_unused_descriptors: false,
-        },
-        SpirvModule {
-            spirv: &frag_module.spirv,
-            entry_points: &["main"],
-            dynamic_uniform_buffers: true,
-            dynamic_storage_buffers: false,
-            include_unused_descriptors: false,
-        },
-    ])
-    .create(&device, vk::DescriptorSetLayoutCreateFlags::empty())?;
-
-    let pipeline_info = object::GraphicsPipelineCreateInfo::builder()
-        .stages([
-            PipelineStage {
-                flags: vk::PipelineShaderStageCreateFlags::empty(),
-                stage: vk::ShaderStageFlags::VERTEX,
-                module: vert_module.module.clone(),
-                name: "main".into(),
-                specialization_info: None,
-            },
-            PipelineStage {
-                flags: vk::PipelineShaderStageCreateFlags::empty(),
-                stage: vk::ShaderStageFlags::FRAGMENT,
-                module: frag_module.module.clone(),
-                name: "main".into(),
-                specialization_info: None,
-            },
-        ])
-        .input_assembly(object::state::InputAssembly {
-            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            primitive_restart_enable: false,
-        })
-        .viewport(object::state::Viewport {
-            // the actual contents are ignored, it is just important to have one for each
-            viewports: smallvec![Default::default()],
-            scissors: smallvec![Default::default()],
-        })
-        .vertex_input(object::state::VertexInput {
-            vertex_bindings: [object::state::InputBinding {
-                binding: 0,
-                // 3 floats for position, 1 uint for B10G11R11 normal
-                stride: 3 * 4 + 4,
-                input_rate: vk::VertexInputRate::VERTEX,
-            }]
-            .to_vec(),
-            vertex_attributes: [
-                object::state::InputAttribute {
-                    location: 0,
-                    binding: 0,
-                    format: vk::Format::R32G32B32_SFLOAT,
-                    offset: 0,
+    let (pipeline, pipeline_layout) = cache
+        .borrow_mut()
+        .compute_located(args!(), args!(vert_module, frag_module), || {
+            let layout = ReflectedLayout::new(&[
+                SpirvModule {
+                    spirv: &vert_module.spirv,
+                    entry_points: &["main"],
+                    dynamic_uniform_buffers: true,
+                    dynamic_storage_buffers: false,
+                    include_unused_descriptors: false,
                 },
-                object::state::InputAttribute {
-                    location: 1,
-                    binding: 0,
-                    format: vk::Format::A2B10G10R10_SNORM_PACK32,
-                    offset: 3 * 4,
+                SpirvModule {
+                    spirv: &frag_module.spirv,
+                    entry_points: &["main"],
+                    dynamic_uniform_buffers: true,
+                    dynamic_storage_buffers: false,
+                    include_unused_descriptors: false,
                 },
-            ]
-            .to_vec(),
-        })
-        .rasterization(object::state::Rasterization {
-            depth_clamp_enable: false,
-            rasterizer_discard_enable: false,
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: vk::CullModeFlags::NONE,
-            front_face: vk::FrontFace::CLOCKWISE,
-            line_width: 1.0,
-            ..Default::default()
-        })
-        .multisample(object::state::Multisample {
-            rasterization_samples: vk::SampleCountFlags::C1,
-            ..Default::default()
-        })
-        .depth_stencil(object::state::DepthStencil {
-            depth_test_enable: true,
-            depth_write_enable: true,
-            depth_compare_op: vk::CompareOp::LESS,
-            depth_bounds_test_enable: false,
-            stencil_test_enable: false,
-            ..Default::default()
-        })
-        .color_blend(object::state::ColorBlend {
-            attachments: vec![object::state::Attachment {
-                color_write_mask: vk::ColorComponentFlags::all(),
-                ..Default::default()
-            }],
-            ..Default::default()
-        })
-        .dynamic_state([vk::DynamicState::SCISSOR, vk::DynamicState::VIEWPORT])
-        .layout(pipeline_layout.clone())
-        .finish();
+            ])
+            .create(&device, vk::DescriptorSetLayoutCreateFlags::empty())
+            .unwrap();
 
-    let pipeline = device.create_delayed_graphics_pipeline(pipeline_info);
+            let pipeline_info = object::GraphicsPipelineCreateInfo::builder()
+                .stages([
+                    PipelineStage {
+                        flags: vk::PipelineShaderStageCreateFlags::empty(),
+                        stage: vk::ShaderStageFlags::VERTEX,
+                        module: vert_module.module.clone(),
+                        name: "main".into(),
+                        specialization_info: None,
+                    },
+                    PipelineStage {
+                        flags: vk::PipelineShaderStageCreateFlags::empty(),
+                        stage: vk::ShaderStageFlags::FRAGMENT,
+                        module: frag_module.module.clone(),
+                        name: "main".into(),
+                        specialization_info: None,
+                    },
+                ])
+                .input_assembly(object::state::InputAssembly {
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    primitive_restart_enable: false,
+                })
+                .viewport(object::state::Viewport {
+                    // the actual contents are ignored, it is just important to have one for each
+                    viewports: smallvec![Default::default()],
+                    scissors: smallvec![Default::default()],
+                })
+                .vertex_input(object::state::VertexInput {
+                    vertex_bindings: [object::state::InputBinding {
+                        binding: 0,
+                        // 3 floats for position, 1 uint for B10G11R11 normal
+                        stride: 3 * 4 + 4,
+                        input_rate: vk::VertexInputRate::VERTEX,
+                    }]
+                    .to_vec(),
+                    vertex_attributes: [
+                        object::state::InputAttribute {
+                            location: 0,
+                            binding: 0,
+                            format: vk::Format::R32G32B32_SFLOAT,
+                            offset: 0,
+                        },
+                        object::state::InputAttribute {
+                            location: 1,
+                            binding: 0,
+                            format: vk::Format::A2B10G10R10_SNORM_PACK32,
+                            offset: 3 * 4,
+                        },
+                    ]
+                    .to_vec(),
+                })
+                .rasterization(object::state::Rasterization {
+                    depth_clamp_enable: false,
+                    rasterizer_discard_enable: false,
+                    polygon_mode: vk::PolygonMode::FILL,
+                    cull_mode: vk::CullModeFlags::NONE,
+                    front_face: vk::FrontFace::CLOCKWISE,
+                    line_width: 1.0,
+                    ..Default::default()
+                })
+                .multisample(object::state::Multisample {
+                    rasterization_samples: vk::SampleCountFlags::C1,
+                    ..Default::default()
+                })
+                .depth_stencil(object::state::DepthStencil {
+                    depth_test_enable: true,
+                    depth_write_enable: true,
+                    depth_compare_op: vk::CompareOp::LESS,
+                    depth_bounds_test_enable: false,
+                    stencil_test_enable: false,
+                    ..Default::default()
+                })
+                .color_blend(object::state::ColorBlend {
+                    attachments: vec![object::state::Attachment {
+                        color_write_mask: vk::ColorComponentFlags::all(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+                .dynamic_state([vk::DynamicState::SCISSOR, vk::DynamicState::VIEWPORT])
+                .layout(layout.clone())
+                .finish();
+
+            (
+                device.create_delayed_graphics_pipeline(pipeline_info),
+                layout,
+            )
+        })
+        .into_inner();
+
+    let whole_descriptor_pipeline_layout = cache
+        .borrow()
+        .get_named::<object::PipelineLayout>("all layout")
+        .expect("Compute pipelines have already been compiled, the all layout must be available")
+        .into_inner();
 
     let graph = compiler.compile(device.clone(), |b| {
         let queue = b.import_queue(queue);
@@ -773,7 +829,7 @@ unsafe fn make_graph(
             LambdaPass(
                 move |builder| {
                     builder.use_image(
-                        function_values,
+                        intersections,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
                         vk::AccessFlags2KHR::SHADER_STORAGE_READ,
@@ -999,7 +1055,7 @@ unsafe fn make_swapchain(
     let info = SwapchainCreateInfo {
         surface: surface.into_raw(),
         flags: vk::SwapchainCreateFlagsKHR::empty(),
-        min_image_count: 2,
+        min_image_count: 3,
         format: vk::Format::B8G8R8A8_UNORM,
         color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
         extent,

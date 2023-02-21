@@ -178,7 +178,12 @@ impl RenderPass for SimpleShaderPass {
             self.pipeline.get_handle(),
         );
 
-        let perspective = Mat4::perspective_rh(1.2 * std::f32::consts::FRAC_PI_4, 1.0, 0.2, 512.0);
+        let perspective = Mat4::perspective_rh(
+            1.2 * std::f32::consts::FRAC_PI_4,
+            (width as f32) / (height as f32),
+            0.2,
+            512.0,
+        );
         let world_to_view = {
             let transform = self.info.transform.lock().unwrap();
             let ro = Mat4::from_quat(transform.rotation.conjugate());

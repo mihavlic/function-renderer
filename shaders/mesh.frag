@@ -21,18 +21,6 @@ float worldPosLine() {
 }
 
 void main() {
-    // float intensity = dot(inNormal, normalize(vec3(1.0, 1.0, 5.0)));
-    // vec3 a = inNormal * (max(0.0, intensity) + 0.1);
-    
-    // float a = (acos(inNormal.x) / 6.28) + 0.5;
-    // float b = (acos(inNormal.y) / 6.28) + 0.5;
-    // float z = (acos(inNormal.z) / 6.28) + 0.5;
-
-    // float intensity = 1.0 - dot(normalize(inViewNormal), vec3(0.0, 1.0, 0.0));
-    // float adjusted = intensity * 0.9 + 0.1;
-
     float intensity = worldPosLine();
     outColor = vec4(abs(inWorldNormal) * intensity, 1.0);
-
-    // color = vec4(normalize(inWorldNormal) + 0.2, 1.);
 }

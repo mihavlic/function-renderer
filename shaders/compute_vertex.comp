@@ -91,18 +91,18 @@ vec4 get_edge(uvec3 pos, uint axis) {
 uint pack_A2B10G10R10_SNORM_PACK32(vec4 vector) {
     vec4 c = clamp(vector, -1.0, 1.0);
 
-    const uint xs = c.x < 0.0 ? 1 : 0;
-    const uint ys = c.y < 0.0 ? 1 : 0;
-    const uint zs = c.z < 0.0 ? 1 : 0;
-    const uint ws = c.w < 0.0 ? 1 : 0;
+    const uint xs = c.x < 0 ? 1 : 0;
+    const uint ys = c.y < 0 ? 1 : 0;
+    const uint zs = c.z < 0 ? 1 : 0;
+    const uint ws = c.w < 0 ? 1 : 0;
 
-    uvec4 a = uvec4(abs(c) * vec4(512.0, 512.0, 512.0, 1.0));
-
-    return 
-        ws << 31 | a.w << 30 |
-        zs << 29 | a.z << 20 |
-        ys << 19 | a.y << 10 |
-        xs <<  9 | a.x;
+    return uint
+    (
+        ws << 31 | (uint(c.w       + (ws << 1)) &   1) << 30 |
+        zs << 29 | (uint(c.z * 511 + (zs << 9)) & 511) << 20 |
+        ys << 19 | (uint(c.y * 511 + (ys << 9)) & 511) << 10 |
+        xs <<  9 | (uint(c.x * 511 + (xs << 9)) & 511)
+    );
 }
 
 const uint INDEX_INVALID = 4294967295;

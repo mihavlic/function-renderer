@@ -5,6 +5,7 @@ use std::env::current_dir;
 use std::error::Error;
 use std::fmt::Display;
 use std::fs::File;
+use std::hash::Hash;
 use std::io::{Cursor, Seek};
 use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -38,8 +39,20 @@ use crate::write::make_glsl_math;
 
 pub struct ModuleEntry {
     pub module: object::ShaderModule,
-    pub needs_eval_fn: bool,
     pub spirv: Vec<u32>,
+    pub generation: u32,
+}
+
+impl Hash for ModuleEntry {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.generation.hash(state);
+    }
+}
+
+struct MetaModuleEntry {
+    needs_eval_fn: bool,
+    module: Rc<ModuleEntry>,
+    dirty: bool,
 }
 
 #[derive(PartialEq, Eq)]
@@ -51,7 +64,7 @@ pub enum PollResult {
 
 pub struct ShaderModules {
     eval_fn: String,
-    modules: HashMap<PathBuf, Rc<ModuleEntry>>,
+    modules: HashMap<PathBuf, MetaModuleEntry>,
     watcher: notify::RecommendedWatcher,
     receiver: Receiver<AsyncEvent>,
     thread: JoinHandle<()>,
@@ -90,7 +103,11 @@ impl ShaderModules {
                 sender.send(AsyncEvent::StdinLine(last.to_owned()));
             }
 
-            let mut history_file = File::options().append(true).open(&path).unwrap();
+            let mut history_file = File::options()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap();
 
             // we manually create the history file since we need to append an entry immediatelly after a line is read
             // since this thread otherwise blocks on stdin the rest of the time and the main thread ending will terminate it immediatelly
@@ -124,8 +141,9 @@ impl ShaderModules {
         Self {
             eval_fn: make_density_function(
                 // "sin(0.25 * sqrt((x-32.0)*(x-32.0) + (y-32.0)*(y-32.0))) * 10 + 40 - z",
-                // "1/(0.01*sqrt((x-32.0)*(x-32.0) + (y-32.0)*(y-32.0))) - z",
-                "0.0",
+                "1/(0.01*sqrt((x-32.0)*(x-32.0) + (y-32.0)*(y-32.0))) - z",
+                // "0.0",
+                // "sin(sqrt(x*x+y*y+z*z))",
             ),
             modules: Default::default(),
             watcher,
@@ -135,11 +153,17 @@ impl ShaderModules {
     }
     fn eval_fn_changed(&mut self, new: String) {
         self.eval_fn = new;
-        self.modules.retain(|_, entry| !entry.needs_eval_fn);
+        for m in self.modules.values_mut() {
+            if m.needs_eval_fn {
+                m.dirty = true;
+            }
+        }
     }
     fn remove_dirty_files(&mut self, dirty: &[PathBuf]) {
         for path in dirty {
-            self.modules.remove(path);
+            if let Some(m) = self.modules.get_mut(path) {
+                m.dirty = true;
+            }
         }
     }
     pub fn poll(&mut self) -> PollResult {
@@ -192,40 +216,58 @@ impl ShaderModules {
     ) -> Result<Rc<ModuleEntry>, Box<dyn Error>> {
         let path = path.as_ref().canonicalize().unwrap();
 
+        let make_new = |generation: u32| -> Result<Rc<ModuleEntry>, Box<dyn Error>> {
+            let source = std::fs::read(&path)?;
+            let mut source = String::from_utf8(source)?;
+
+            if needs_eval_fn {
+                assert!(!self.eval_fn.is_empty());
+
+                source.push('\n');
+                source.push_str(&self.eval_fn);
+            }
+
+            let spirv = compile_glsl_to_spirv(
+                &source,
+                rust_target_dir().as_ref().as_ref(),
+                std::str::from_utf8(path.extension().unwrap().as_bytes()).unwrap(),
+            )?;
+
+            let module = device.create_shader_module_spirv(&spirv)?;
+
+            Ok(Rc::new(ModuleEntry {
+                module,
+                spirv,
+                generation,
+            }))
+        };
+
         match self.modules.entry(path.clone()) {
-            Entry::Occupied(exists) => Ok(exists.get().clone()),
-            Entry::Vacant(no) => {
-                let source = std::fs::read(&path)?;
-                let mut source = String::from_utf8(source)?;
-
-                if needs_eval_fn {
-                    assert!(!self.eval_fn.is_empty());
-
-                    source.push('\n');
-                    source.push_str(&self.eval_fn);
+            Entry::Occupied(mut exists) => {
+                let meta = exists.get_mut();
+                if meta.dirty {
+                    let next_generation = meta.module.generation + 1;
+                    let new = make_new(next_generation)?;
+                    meta.module = new;
+                    meta.dirty = false;
                 }
 
-                let spirv = compile_glsl_to_spirv(
-                    &source,
-                    rust_target_dir().as_ref().as_ref(),
-                    std::str::from_utf8(path.extension().unwrap().as_bytes()).unwrap(),
-                )?;
+                Ok(meta.module.clone())
+            }
+            Entry::Vacant(no) => {
+                let new = make_new(0)?;
 
-                let module = device.create_shader_module_spirv(&spirv)?;
-
-                let value = Rc::new(ModuleEntry {
-                    module,
+                no.insert(MetaModuleEntry {
                     needs_eval_fn,
-                    spirv,
+                    module: new.clone(),
+                    dirty: false,
                 });
-
-                no.insert(value.clone());
 
                 assert!(&path.exists());
                 self.watcher
                     .watch(&path, notify::RecursiveMode::NonRecursive);
 
-                Ok(value)
+                Ok(new)
             }
         }
     }
