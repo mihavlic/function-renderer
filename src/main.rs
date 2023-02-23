@@ -56,7 +56,6 @@ use winit::event::{
     DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
 };
 use winit::event_loop::EventLoop;
-use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::window::WindowBuilder;
 use write::{compile_glsl_to_spirv, make_density_function};
 use yawpitch::YawPitchZUp;
@@ -190,7 +189,7 @@ fn main() {
                     if !(window.is_visible() == Some(false) || size.width == 0 || size.height == 0)
                     {
                         let result = graph.run(GraphRunConfig {
-                            swapchain_acquire_timeout_ns: 1_000_000_000 / 30,
+                            swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
                             acquire_swapchain_with_fence: false,
                             return_after_swapchain_recreate: true,
                         });
@@ -206,6 +205,7 @@ fn main() {
                             std::thread::sleep(remaining);
                         }
                     }
+
                     device.idle_cleanup_poll();
 
                     if rebuild_graph && !exit {
@@ -960,7 +960,7 @@ unsafe fn make_device(
     let info = InstanceCreateInfo {
         config: &mut conf,
         validation_layers: &[
-            pumice::cstr!("VK_LAYER_KHRONOS_validation"),
+            // pumice::cstr!("VK_LAYER_KHRONOS_validation"),
             // pumice::cstr!("VK_LAYER_LUNARG_api_dump"),
         ],
         enable_debug_callback: true,
@@ -1043,12 +1043,12 @@ unsafe fn make_swapchain(
     assert_eq!(result, vk::Result::SUCCESS);
 
     let mut present_mode = vk::PresentModeKHR::FIFO;
-    for mode in present_modes {
-        if mode == vk::PresentModeKHR::MAILBOX {
-            present_mode = vk::PresentModeKHR::MAILBOX;
-            break;
-        }
-    }
+    // for mode in present_modes {
+    //     if mode == vk::PresentModeKHR::MAILBOX {
+    //         present_mode = vk::PresentModeKHR::MAILBOX;
+    //         break;
+    //     }
+    // }
 
     // TODO swapchain configuration fallback for formats, present modes, and color spaces
     let info = SwapchainCreateInfo {

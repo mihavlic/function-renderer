@@ -13,6 +13,7 @@ layout(location = 1) in vec4 inNormal;
 layout(location = 0) out vec3 outWorldPos;
 layout(location = 1) out vec3 outWorldNormal;
 layout(location = 2) out vec3 outViewNormal;
+layout(location = 3) out vec3 outViewPos;
 
 vec3 uint_to_norm_vec3(uint packed) {
     const uint I10 = (1 << 11) - 1;
@@ -32,6 +33,7 @@ void main() {
 
     outWorldPos = inPosition;
     outWorldNormal = inNormal.xyz; // uint_to_norm_vec3(inNormal);
-    outViewNormal = (push.model_matrix * vec4(outWorldNormal, 1.0) ).xyz;
+    outViewNormal = (push.model_matrix * vec4(inPosition + inNormal.xyz, 1.0) ).xyz - (push.model_matrix * vec4(inPosition, 1.0)).xyz;
+    outViewPos = pos.xyz;
     gl_Position = pos;
 }
