@@ -11,11 +11,11 @@ use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::{io, slice};
 
-use crate::write::{compile_glsl_to_spirv, make_density_function};
+use crate::write::{compile_glsl_to_spirv, make_density_function, math_into_glsl};
 use graph::device::reflection::ReflectedLayout;
 use graph::device::{self, read_spirv, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::GraphCompiler;
@@ -50,7 +50,7 @@ impl Hash for ModuleEntry {
 }
 
 struct MetaModuleEntry {
-    needs_eval_fn: bool,
+    needs_density_fn: bool,
     module: Rc<ModuleEntry>,
     dirty: bool,
 }
@@ -58,27 +58,38 @@ struct MetaModuleEntry {
 #[derive(PartialEq, Eq)]
 pub enum PollResult {
     Recreate,
-    Continue,
+    Skip,
+    Ok,
     Exit,
 }
 
-pub struct ShaderModules {
-    eval_fn: String,
-    modules: HashMap<PathBuf, MetaModuleEntry>,
-    watcher: notify::RecommendedWatcher,
-    receiver: Receiver<AsyncEvent>,
+struct StdinWatcherData {
     thread: JoinHandle<()>,
 }
 
+pub struct ShaderModules {
+    density_function: Option<String>,
+    modules: HashMap<PathBuf, MetaModuleEntry>,
+    watcher: notify::RecommendedWatcher,
+    receiver: Receiver<AsyncEvent>,
+    stdin: Option<JoinHandle<()>>,
+}
+
+pub enum ShaderModulesConfig<'a> {
+    Static(&'a str),
+    WatchStdin,
+}
+
 impl ShaderModules {
-    pub fn new() -> Self {
+    pub fn new(config: ShaderModulesConfig) -> Self {
         let (sender, receiver) = mpsc::channel();
-        let sender1 = sender.clone();
+
+        let mut sender_copy = sender.clone();
         let watcher = notify::recommended_watcher(
             move |res: Result<notify::Event, notify::Error>| match res {
                 Ok(ok) => match ok.kind {
                     notify::EventKind::Modify(_) => {
-                        sender1.send(AsyncEvent::FilesChanged(ok.paths));
+                        sender_copy.send(AsyncEvent::FilesChanged(ok.paths));
                     }
                     _ => {}
                 },
@@ -87,8 +98,7 @@ impl ShaderModules {
         )
         .unwrap();
 
-        let thread = std::thread::spawn(move || {
-            return;
+        let stdin_watcher = move || {
             use std::io::Write;
 
             let path = PathBuf::from_str(&rust_target_dir())
@@ -137,25 +147,31 @@ impl ShaderModules {
                     }
                 }
             }
-        });
+        };
 
-        Self {
-            eval_fn: make_density_function(
-                // "sin(0.25 * sqrt((x-32.0)*(x-32.0) + (y-32.0)*(y-32.0))) * 10 + 40 - z",
-                "1/(0.01*sqrt((x-32.0)*(x-32.0) + (y-32.0)*(y-32.0))) - z",
-                // "0.0",
-                // "sin(sqrt(x*x+y*y+z*z))",
-            ),
+        let mut s = Self {
+            density_function: None,
             modules: Default::default(),
             watcher,
             receiver,
-            thread,
-        }
+            stdin: None,
+        };
+
+        let watcher = match config {
+            ShaderModulesConfig::Static(str) => {
+                s.density_function = Some(math_into_glsl(str).unwrap());
+            }
+            ShaderModulesConfig::WatchStdin => {
+                s.stdin = Some(std::thread::spawn(stdin_watcher));
+            }
+        };
+
+        s
     }
     fn eval_fn_changed(&mut self, new: String) {
-        self.eval_fn = new;
+        self.density_function = Some(new);
         for m in self.modules.values_mut() {
-            if m.needs_eval_fn {
+            if m.needs_density_fn {
                 m.dirty = true;
             }
         }
@@ -168,35 +184,39 @@ impl ShaderModules {
         }
     }
     pub fn poll(&mut self) -> PollResult {
-        let mut new_eval_expr = String::new();
+        let mut new_density_function = String::new();
         let mut files = Vec::new();
         loop {
             match self.receiver.try_recv() {
                 Ok(event) => match event {
                     AsyncEvent::FilesChanged(changed) => files.extend(changed),
-                    AsyncEvent::StdinLine(line) => new_eval_expr = line,
+                    AsyncEvent::StdinLine(line) => new_density_function = line,
                     AsyncEvent::Exit => return PollResult::Exit,
                 },
                 Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => panic!("Channel senders disconnected"),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    panic!("Sender threads exited, this is an error")
+                }
             }
         }
-        let mut status = PollResult::Continue;
-        if !new_eval_expr.is_empty() {
-            let result = std::panic::catch_unwind(|| make_glsl_math(&new_eval_expr));
-            match result {
-                Ok(glsl_math) => {
-                    let glsl = make_density_function(&glsl_math);
-                    self.eval_fn_changed(glsl);
-                    status = PollResult::Recreate;
 
-                    // eprintln!("New expression: {glsl_math}");
+        if self.density_function.is_none() && new_density_function.is_empty() {
+            return PollResult::Skip;
+        }
+
+        let mut status = PollResult::Ok;
+        if !new_density_function.is_empty() {
+            match math_into_glsl(&new_density_function) {
+                Ok(glsl) => {
+                    self.density_function = Some(glsl);
+                    status = PollResult::Recreate;
                 }
-                Err(err) => {
-                    eprintln!("Error parsing expression")
+                Err(e) => {
+                    eprintln!("Error parsing expression {:?}", e)
                 }
             }
         }
+
         if !files.is_empty() {
             status = PollResult::Recreate;
             files.sort();
@@ -212,35 +232,46 @@ impl ShaderModules {
     pub unsafe fn retrieve(
         &mut self,
         path: impl AsRef<Path>,
-        needs_eval_fn: bool,
         device: &device::Device,
     ) -> Result<Rc<ModuleEntry>, Box<dyn Error>> {
         let path = path.as_ref().canonicalize().unwrap();
 
-        let make_new = |generation: u32| -> Result<Rc<ModuleEntry>, Box<dyn Error>> {
+        let make_new = |generation: u32| -> Result<(Rc<ModuleEntry>, bool), Box<dyn Error>> {
             let source = std::fs::read(&path)?;
             let mut source = String::from_utf8(source)?;
 
-            if needs_eval_fn {
-                assert!(!self.eval_fn.is_empty());
+            let needs_density_fn = source.contains("float density(");
 
-                source.push('\n');
-                source.push_str(&self.eval_fn);
+            if needs_density_fn {
+                assert!(!self.density_function.is_none());
+
+                source.push_str("\n\n");
+                source.push_str(self.density_function.as_ref().unwrap());
             }
 
             let spirv = compile_glsl_to_spirv(
                 &source,
                 rust_target_dir().as_ref().as_ref(),
                 std::str::from_utf8(path.extension().unwrap().as_bytes()).unwrap(),
-            )?;
+            )
+            .map_err(|e| {
+                format!(
+                    "Error compiling shader {:?}:\n{:?}",
+                    path.file_name().unwrap(),
+                    e
+                )
+            })?;
 
             let module = device.create_shader_module_spirv(&spirv)?;
 
-            Ok(Rc::new(ModuleEntry {
-                module,
-                spirv,
-                generation,
-            }))
+            Ok((
+                Rc::new(ModuleEntry {
+                    module,
+                    spirv,
+                    generation,
+                }),
+                needs_density_fn,
+            ))
         };
 
         match self.modules.entry(path.clone()) {
@@ -248,18 +279,19 @@ impl ShaderModules {
                 let meta = exists.get_mut();
                 if meta.dirty {
                     let next_generation = meta.module.generation + 1;
-                    let new = make_new(next_generation)?;
+                    let (new, needs_density_fn) = make_new(next_generation)?;
                     meta.module = new;
                     meta.dirty = false;
+                    meta.needs_density_fn = needs_density_fn;
                 }
 
                 Ok(meta.module.clone())
             }
             Entry::Vacant(no) => {
-                let new = make_new(0)?;
+                let (new, needs_density_fn) = make_new(0)?;
 
                 no.insert(MetaModuleEntry {
-                    needs_eval_fn,
+                    needs_density_fn,
                     module: new.clone(),
                     dirty: false,
                 });

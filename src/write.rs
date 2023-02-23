@@ -124,9 +124,9 @@ pub fn make_glsl_math(raw_math: &str) -> String {
 pub fn make_density_function(expr: &str) -> String {
     format!(
 "float density(vec4 data) {{
-    const float CONST_E = 2.71828182845904523536028747135266250;
-    const float CONST_PI = 3.14159265358979323846264338327950288;
-    const float CONST_HALF_PI = 1.57079632679489661923132169163975144;
+    const float CONSTANT_E = 2.71828182845904523536028747135266250;
+    const float CONSTANT_PI = 3.14159265358979323846264338327950288;
+    const float CONSTANT_HALF_PI = 1.57079632679489661923132169163975144;
     
     float x = data.x;
     float y = data.y;
@@ -181,19 +181,7 @@ pub fn compile_glsl_to_spirv(
     read_spirv(&mut compiled).map_err(|e| e.into())
 }
 
-// pub fn compile_wgsl_to_spirv(source_code: &str, temp_folder: &Path) -> Vec<u32> {
-//     let source = temp_folder.join("source.wgsl");
-//     std::fs::write(&source, source_code).unwrap();
-
-//     let child = std::process::Command::new("naga")
-//         .arg("source.wgsl")
-//         .arg("compiled.spv")
-//         .current_dir(temp_folder)
-//         .spawn()
-//         .expect("Failed to run glslangValidator");
-//     let output = child.wait_with_output();
-
-//     let mut compiled = File::open(temp_folder.join("compiled.spv")).unwrap();
-
-//     read_spirv(&mut compiled).unwrap()
-// }
+pub fn math_into_glsl(math: &str) -> std::thread::Result<String> {
+    let glsl_math = std::panic::catch_unwind(|| make_glsl_math(&math))?;
+    Ok(make_density_function(&glsl_math))
+}

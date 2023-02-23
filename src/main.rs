@@ -43,7 +43,7 @@ use graph::passes::{self, ClearImage, SimpleShader};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma::{self};
-use hotreaload::{PollResult, ShaderModules};
+use hotreaload::{PollResult, ShaderModules, ShaderModulesConfig};
 use mesh_pass::ArcBallAngles;
 use notify::event::{DataChange, ModifyKind};
 use notify::Watcher;
@@ -76,7 +76,8 @@ fn main() {
         let (surface, device, queue) = make_device(&window);
         let swapchain = make_swapchain(&window, surface, &device);
 
-        let mut modules = ShaderModules::new();
+        let mut modules =
+            ShaderModules::new(ShaderModulesConfig::Static("sin(sqrt(x*x+y*y+z*z) / pi)"));
         let mut cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
 
@@ -178,6 +179,13 @@ fn main() {
                     let mut exit = false;
                     let mut rebuild_graph = false;
 
+                    match modules.poll() {
+                        PollResult::Recreate => rebuild_graph = true,
+                        PollResult::Skip => return,
+                        PollResult::Ok => {}
+                        PollResult::Exit => exit = true,
+                    }
+
                     let size = window.inner_size();
                     if !(window.is_visible() == Some(false) || size.width == 0 || size.height == 0)
                     {
@@ -199,12 +207,6 @@ fn main() {
                         }
                     }
                     device.idle_cleanup_poll();
-
-                    match modules.poll() {
-                        PollResult::Recreate => rebuild_graph = true,
-                        PollResult::Continue => {}
-                        PollResult::Exit => exit = true,
-                    }
 
                     if rebuild_graph && !exit {
                         let result = make_graph(
@@ -256,9 +258,6 @@ unsafe fn make_graph(
     cache: &mut RecomputationCache,
     device: &device::OwnedDevice,
 ) -> Result<graph::graph::execute::CompiledGraph, Box<dyn Error>> {
-    // let density_function = cache.get_or_insert_named("density function", || {
-    //     "sin(sqrt(x*x + y*y + z*z) / 8.0)".to_string()
-    // });
     let mut cache = RefCell::new(cache);
 
     macro_rules! args {
@@ -273,7 +272,7 @@ unsafe fn make_graph(
     }
 
     let mut create_pipeline = |path: &str, needs_eval_fn: bool| -> Result<_, Box<dyn Error>> {
-        let module = modules.retrieve(path, needs_eval_fn, device)?;
+        let module = modules.retrieve(path, device)?;
         let mut cache = cache.borrow_mut();
         let all_layout =
             cache.get_or_insert_named::<object::PipelineLayout, _>("all layout", || {
@@ -396,8 +395,8 @@ unsafe fn make_graph(
         "indices",
     )?;
 
-    let vert_module = modules.retrieve("shaders/mesh.vert", false, device)?;
-    let frag_module = modules.retrieve("shaders/mesh.frag", false, device)?;
+    let vert_module = modules.retrieve("shaders/mesh.vert", device)?;
+    let frag_module = modules.retrieve("shaders/mesh.frag", device)?;
 
     let (pipeline, pipeline_layout) = cache
         .borrow_mut()
