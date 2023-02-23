@@ -8,8 +8,8 @@ struct Vertex {
     uint packed_normal;
 };
 
-layout(binding = 0, r16) uniform image3D function_values;
-layout(binding = 1, rgba8) uniform image3D intersections;
+layout(binding = 0, r16f) uniform readonly image3D function_values;
+layout(binding = 1, rgba8) uniform writeonly image3D intersections;
 layout(binding = 2, r32ui) uniform uimage3D vertex_indices;
 layout(binding = 3, scalar) buffer VertexData {
     uint size;
@@ -74,6 +74,7 @@ void main() {
 
     uvec3 index = global_id;
 
+    // initially clear the output texture
     imageStore(intersections, ivec3(index), vec4(0.0));
 
     if (pos2.x > (3 * 64 - 1) || pos2.y > 63 || pos2.z > 63) {
@@ -84,7 +85,7 @@ void main() {
     float p2 = imageLoad(function_values, ivec3(pos2)).x;
 
     // early exit if the sign is the same
-    if ((p1 >= 0) == (p2 >= 0)) {
+    if ((p1 >= 0.0) == (p2 >= 0.0)) {
         return;
     }
 
@@ -119,5 +120,4 @@ void main() {
 
         imageStore(intersections, ivec3(index), vec4(normal, x));
     }
-
 }

@@ -88,6 +88,7 @@ impl ShaderModules {
         .unwrap();
 
         let thread = std::thread::spawn(move || {
+            return;
             use std::io::Write;
 
             let path = PathBuf::from_str(&rust_target_dir())
