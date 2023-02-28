@@ -1,7 +1,7 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
 
-// #define USE_SUBGROUP_OPS
+#define USE_SUBGROUP_OPS
 
 #ifdef USE_SUBGROUP_OPS
     #extension GL_KHR_shader_subgroup_basic : enable
@@ -52,7 +52,7 @@ float density(vec4 data);
 // compute the gradient of the function using finite differences
 // FIXME code duplication
 vec3 calculate_gradient(vec3 pos) {
-    const float d = 2.0;
+    const float d = 0.05;
     
     float x = pos.x;
     float y = pos.y;
@@ -210,7 +210,7 @@ void main() {
     vec3 cellspace_vertex = intersections_sum / float(intersections_count);
 
     // iteratively move the point according to the distance to the intersection planes
-    for (int iter = 0; iter < 15; iter++) {
+    for (int iter = 0; iter < 5; iter++) {
         vec3 force = vec3(0.0);
         for (int i = 0; i < 12; i++) {
             vec4 intersection = edges[i];
@@ -227,7 +227,7 @@ void main() {
             // move closer to the planes of the intersections
             0.5 * (force / float(intersections_count)) + 
             // nudge a tiny amount towards the cell center, allegedly it improves the quality
-            0.01 * (cellspace_vertex - vec3(0.5));
+            0.001 * (cellspace_vertex - vec3(0.5));
     }
 
     // we are bump allocating vertices, a stream compaction pass would probably be more efficient

@@ -168,7 +168,7 @@ impl ShaderModules {
 
         s
     }
-    fn eval_fn_changed(&mut self, new: String) {
+    fn density_fn_changed(&mut self, new: String) {
         self.density_function = Some(new);
         for m in self.modules.values_mut() {
             if m.needs_density_fn {
@@ -208,7 +208,7 @@ impl ShaderModules {
         if !new_density_function.is_empty() {
             match math_into_glsl(&new_density_function) {
                 Ok(glsl) => {
-                    self.density_function = Some(glsl);
+                    self.density_fn_changed(glsl);
                     status = PollResult::Recreate;
                 }
                 Err(e) => {

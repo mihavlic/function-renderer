@@ -385,7 +385,15 @@ pub fn parse_monoop(parser: &mut Parser) -> Box<Expression> {
         }
         Token::Ident(ident) => {
             if let Some(op) = UnaryOperation::try_function_str(ident) {
-                let child = parse_expr(parser, 2);
+                let child;
+                // handle differently `sin( expr )` and `sin expr`
+                if let Token::LParen = parser.peek() {
+                    parser.next();
+                    child = parse_expr(parser, 8);
+                    parser.ensure_token(&Token::RParen);
+                } else {
+                    child = parse_expr(parser, 2);
+                }
                 Expression::Unary { op, child }
             } else if let Some(builtin) = BuiltingVariable::try_from_str(ident) {
                 Expression::Builtin(builtin)

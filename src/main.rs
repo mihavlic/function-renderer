@@ -35,7 +35,7 @@ use graph::device::reflection::{ReflectedLayout, SpirvModule};
 use graph::device::{self, read_spirv, Device, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::GraphCompiler;
 use graph::graph::descriptors::{DescBuffer, DescImage, DescSetBuilder, DescriptorData};
-use graph::graph::execute::{GraphExecutor, GraphRunConfig, GraphRunStatus};
+use graph::graph::execute::{CompiledGraph, GraphExecutor, GraphRunConfig, GraphRunStatus};
 use graph::graph::record::GraphPassBuilder;
 use graph::instance::{Instance, InstanceCreateInfo, OwnedInstance};
 use graph::object::{self, ImageCreateInfo, PipelineStage, SwapchainCreateInfo};
@@ -75,8 +75,12 @@ fn main() {
         let (surface, device, queue) = make_device(&window);
         let swapchain = make_swapchain(&window, surface, &device);
 
-        let mut modules =
-            ShaderModules::new(ShaderModulesConfig::Static("sin(sqrt(x*x+y*y+z*z) / pi)"));
+        let mut modules = ShaderModules::new(
+            ShaderModulesConfig::WatchStdin,
+            // ShaderModulesConfig::Static(
+            //     "sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z",
+            // )
+        );
         let mut cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
 
@@ -90,29 +94,18 @@ fn main() {
         let transform: Arc<Mutex<Transform<RightHanded>>> =
             Arc::new(Mutex::new(Transform::IDENTITY));
 
-        let mut graph = make_graph(
-            &swapchain,
-            queue,
-            transform.clone(),
-            &mut modules,
-            &mut compiler,
-            &mut cache,
-            &device,
-        )
-        .unwrap();
-
         let mut prev = std::time::Instant::now();
         let mut mouse_left_pressed = false;
         let mut mouse_right_pressed = false;
 
-        let mut graph_option = Some(graph);
+        let mut graph: Option<CompiledGraph> = None;
+
         let mut device_option = Some(device);
         let mut swapchain_option = Some(swapchain);
         let mut modules_option = Some(modules);
         let mut cache_option = Some(cache);
 
         event_loop.run(move |event, _, control_flow| {
-            let mut graph = graph_option.as_mut().unwrap();
             let mut device = device_option.as_mut().unwrap();
             let mut swapchain = swapchain_option.as_mut().unwrap();
             let mut modules = modules_option.as_mut().unwrap();
@@ -186,23 +179,28 @@ fn main() {
                     }
 
                     let size = window.inner_size();
-                    if !(window.is_visible() == Some(false) || size.width == 0 || size.height == 0)
-                    {
-                        let result = graph.run(GraphRunConfig {
-                            swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
-                            acquire_swapchain_with_fence: false,
-                            return_after_swapchain_recreate: true,
-                        });
-                        match result {
-                            GraphRunStatus::Ok => {}
-                            GraphRunStatus::SwapchainAcquireTimeout => {}
-                            GraphRunStatus::SwapchainRecreated => rebuild_graph = true,
-                        }
-
-                        if let Some(remaining) =
-                            Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
+                    if let Some(graph) = graph.as_mut() {
+                        if !(window.is_visible() == Some(false)
+                            || size.width == 0
+                            || size.height == 0)
                         {
-                            std::thread::sleep(remaining);
+                            let result = graph.run(GraphRunConfig {
+                                swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
+                                acquire_swapchain_with_fence: false,
+                                return_after_swapchain_recreate: true,
+                            });
+
+                            match result {
+                                GraphRunStatus::Ok => {}
+                                GraphRunStatus::SwapchainAcquireTimeout => {}
+                                GraphRunStatus::SwapchainRecreated => rebuild_graph = true,
+                            }
+
+                            if let Some(remaining) =
+                                Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
+                            {
+                                std::thread::sleep(remaining);
+                            }
                         }
                     }
 
@@ -221,8 +219,7 @@ fn main() {
 
                         match result {
                             Ok(ok) => {
-                                graph_option = Some(ok);
-                                graph = graph_option.as_mut().unwrap();
+                                graph = Some(ok);
                             }
                             Err(err) => {
                                 eprintln!("Graph compilation error: {err}");
@@ -235,7 +232,7 @@ fn main() {
                     }
                 }
                 Event::LoopDestroyed => {
-                    drop(graph_option.take());
+                    drop(graph.take());
                     drop(swapchain_option.take());
                     drop(modules_option.take());
                     drop(cache_option.take());
@@ -257,7 +254,7 @@ unsafe fn make_graph(
     compiler: &mut GraphCompiler,
     cache: &mut RecomputationCache,
     device: &device::OwnedDevice,
-) -> Result<graph::graph::execute::CompiledGraph, Box<dyn Error>> {
+) -> Result<CompiledGraph, Box<dyn Error>> {
     let mut cache = RefCell::new(cache);
 
     macro_rules! args {

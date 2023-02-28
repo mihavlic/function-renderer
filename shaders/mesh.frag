@@ -23,9 +23,9 @@ float worldPosLine() {
 
 void main() {
     if (
-        inWorldPos.x < 0.7 || inWorldPos.x > 62.0 ||
-        inWorldPos.y < 0.7 || inWorldPos.y > 62.0 ||
-        inWorldPos.z < 0.7 || inWorldPos.z > 62.0
+        inWorldPos.x < 0.5 || inWorldPos.x > 62.0 ||
+        inWorldPos.y < 0.5 || inWorldPos.y > 62.0 ||
+        inWorldPos.z < 0.5 || inWorldPos.z > 62.0
     ) {
         discard;
     }

@@ -137,8 +137,6 @@ pub fn make_density_function(expr: &str) -> String {
 }}")
 }
 
-// pub fn make_shader_with_density(path: )
-
 pub fn compile_glsl_to_spirv(
     source_code: &str,
     temp_folder: &Path,

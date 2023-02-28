@@ -15,24 +15,12 @@ layout(location = 1) out vec3 outWorldNormal;
 layout(location = 2) out vec3 outViewNormal;
 layout(location = 3) out vec3 outViewPos;
 
-vec3 uint_to_norm_vec3(uint packed) {
-    const uint I10 = (1 << 11) - 1;
-    const uint I11 = (1 << 12) - 1;
-    const float F10 = float(I10);
-    const float F11 = float(I11);
-    
-    float r = float(packed & I11) / F11;
-    float g = float((packed >> 11) & I11) / F11;
-    float b = float((packed >> 22) & I10) / F10;
-    
-    return vec3(r, g, b) * 2.0 - 1.0;
-}
-
 void main() {
     vec4 pos = push.projection_matrix * push.model_matrix * vec4(inPosition, 1.0);
 
     outWorldPos = inPosition;
-    outWorldNormal = inNormal.xyz; // uint_to_norm_vec3(inNormal);
+    // FIXME for some reason normals arrive flipped?
+    outWorldNormal = inNormal.yxz;
     outViewNormal = (push.model_matrix * vec4(inPosition + inNormal.xyz, 1.0) ).xyz - (push.model_matrix * vec4(inPosition, 1.0)).xyz;
     outViewPos = pos.xyz;
     gl_Position = pos;

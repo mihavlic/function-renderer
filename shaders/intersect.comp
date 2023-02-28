@@ -36,7 +36,7 @@ float density(vec4 data);
 
 // compute the gradient of the function using finite differences
 vec3 calculate_gradient(vec3 pos) {
-    const float d = 2.0;
+    const float d = 0.05;
     
     float x = pos.x;
     float y = pos.y;
@@ -84,11 +84,20 @@ void main() {
     float p1 = imageLoad(function_values, ivec3(pos)).x;
     float p2 = imageLoad(function_values, ivec3(pos2)).x;
 
+    const float infinity = 1.0 / 0.0;
+
+    // infinity plays kind of poorly with our zero crossing detection
+    // we get better results when rejecting it
+    if (abs(p1) == infinity || abs(p2) == infinity) {
+        return;
+    }
+
     // early exit if the sign is the same
     if ((p1 >= 0.0) == (p2 >= 0.0)) {
         return;
     }
 
+    // a quick path which assumes that the function is a straight line at the intersection point
     // we construct a line equation and intersect it with the axis
     //
     //    |--__
@@ -106,13 +115,46 @@ void main() {
     // x = p1 / (p1 - p2)
 
     float x = p1 / (p1 - p2);
-    vec3 normal = vec3(0.0);
+
+// binary search on the function value to find the intersection
+// https://en.wikipedia.org/wiki/Bisection_method
+#if 1
+    // if the approximate intersection is out of bounds, set it to the middle
+    if (!(0.0 <= x && x <= 1.0)) {
+        x = 0.5;
+    }
+
+    vec3 fpos = vec3(pos);
+    vec3 faxis = vec3(axis);
+
+    float a_density = p1;
+    float a = 0.0;
+    float b = 1.0;
+
+    const float tolerance = 0.01;
+    for (int i = 0; i < 10; i++) {
+        float x_density = density(vec4(fpos + x * faxis, function_data.time));
+
+        if (x_density == 0 || (b - a) < tolerance) {
+            break;
+        }
+        
+        if (sign(x_density) == sign(a_density)) {
+            a_density = x_density;
+            a = x;
+        } else {
+            b = x;
+        }
+
+        x = (a + b) / 2.0;
+    }
+#endif
 
     // if the intersection lies outside the range <0, 1.0> we force it to 0.0, which is specially regarded as empty
     if (-0.0001 <= x && x <= 1.0001) {
         vec3 worldspace_intersection = vec3(pos) + vec3(axis) * x;
         vec3 gradient = calculate_gradient(worldspace_intersection);
-        normal = normalize(gradient);
+        vec3 normal = normalize(gradient);
 
         // the value of 0.0 is reserved for no intersection, so we nudge it to the smallest non-zero value
         float epsilon = 1.0 / 256.0;

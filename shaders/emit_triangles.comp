@@ -1,7 +1,7 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
 
-// #define USE_SUBGROUP_OPS
+#define USE_SUBGROUP_OPS
 
 #ifdef USE_SUBGROUP_OPS
     #extension GL_KHR_shader_subgroup_basic : enable
