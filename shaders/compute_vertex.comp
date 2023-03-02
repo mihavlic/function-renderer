@@ -1,78 +1,26 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
+#extension GL_GOOGLE_include_directive : enable
 
 #define USE_SUBGROUP_OPS
-
 #ifdef USE_SUBGROUP_OPS
     #extension GL_KHR_shader_subgroup_basic : enable
     #extension GL_KHR_shader_subgroup_arithmetic : enable
     #extension GL_KHR_shader_subgroup_ballot : enable
 #endif
 
-
-////// input descriptors, keep this synchronized //////
-
-struct Vertex {
-    vec3 position; 
-    uint packed_normal;
-};
-
-layout(binding = 0, r16f) uniform image3D function_values;
-layout(binding = 1, rgba8) uniform image3D intersections;
-layout(binding = 2, r32ui) uniform uimage3D vertex_indices;
-layout(binding = 3, scalar) buffer VertexData {
-    uint size;
-    uint offset;
-	Vertex vertices[];
-} vertices;
-layout(binding = 4, scalar) buffer IndexData {
-    uint size;
-    uint offset;
-	uint indices[];
-} indices;
-layout(binding = 5, scalar) uniform FunctionData {
-	uvec3 size;
-    vec3 offset;
-    float scale;
-    float time;
-} function_data;
-
-/////////////////////////////////
-
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+#include "compute_descriptors.glsl"
+#include "common.glsl"
+
+float density(vec4 d);
 
 const uvec3[] axes = {
     {1,0,0},
     {0,1,0},
     {0,0,1}
 };
-
-float density(vec4 d);
-
-// compute the gradient of the function using finite differences
-// FIXME code duplication
-vec3 calculate_gradient(vec3 pos) {
-    const float d = 0.05;
-    
-    float x = pos.x;
-    float y = pos.y;
-    float z = pos.z;
-    float t = function_data.time;
-
-#if 0
-    float origin = density(vec4(pos, function_data.time));
-
-    float dx = (density(vec4(x + d, y, z, t)) - origin) / d;
-    float dy = (density(vec4(x, y + d, z, t)) - origin) / d;
-    float dz = (density(vec4(x, y, z + d, t)) - origin) / d;
-#else
-    float dx = (density(vec4(x + d, y, z, t)) - density(vec4(x - d, y, z, t))) / (2.0 * d);
-    float dy = (density(vec4(x, y + d, z, t)) - density(vec4(x, y - d, z, t))) / (2.0 * d);
-    float dz = (density(vec4(x, y, z + d, t)) - density(vec4(x, y, z - d, t))) / (2.0 * d);
-#endif
-
-    return vec3(dx, dy, dz);
-}
 
 float plane_distance(vec3 normal, vec3 intersection, vec3 point) {
     // ax + by + cz - q = 0
