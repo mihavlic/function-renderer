@@ -32,7 +32,7 @@ layout(binding = 5, scalar) uniform FunctionData {
 
 layout(local_size_x = 4 * 3, local_size_y = 4, local_size_z = 4) in;
 
-float density(vec4 data);
+float density(vec4 d);
 
 // compute the gradient of the function using finite differences
 vec3 calculate_gradient(vec3 pos) {

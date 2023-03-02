@@ -3,7 +3,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::env::current_dir;
 use std::error::Error;
-use std::fmt::Display;
+use std::fmt::{format, Display};
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{Cursor, Seek};
@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::{io, slice};
 
-use crate::write::{compile_glsl_to_spirv, make_density_function, math_into_glsl};
+use crate::write::{make_density_function, math_into_glsl, GlslCompiler};
 use graph::device::reflection::ReflectedLayout;
 use graph::device::{self, read_spirv, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::GraphCompiler;
@@ -73,7 +73,10 @@ pub struct ShaderModules {
     watcher: notify::RecommendedWatcher,
     receiver: Receiver<AsyncEvent>,
     stdin: Option<JoinHandle<()>>,
+    compiler: GlslCompiler,
 }
+
+const DENSITY_FUNCTION_MAGIC: &str = "float density(vec4 d);";
 
 pub enum ShaderModulesConfig<'a> {
     Static(&'a str),
@@ -155,11 +158,12 @@ impl ShaderModules {
             watcher,
             receiver,
             stdin: None,
+            compiler: GlslCompiler::new(),
         };
 
-        let watcher = match config {
+        match config {
             ShaderModulesConfig::Static(str) => {
-                s.density_function = Some(math_into_glsl(str).unwrap());
+                s.density_fn_changed(math_into_glsl(str).unwrap());
             }
             ShaderModulesConfig::WatchStdin => {
                 s.stdin = Some(std::thread::spawn(stdin_watcher));
@@ -240,27 +244,25 @@ impl ShaderModules {
             let source = std::fs::read(&path)?;
             let mut source = String::from_utf8(source)?;
 
-            let needs_density_fn = source.contains("float density(");
+            // I would've used the preprocessor to insert the function but then the function isn't
+            // available in the sourcecode which makes the vscode plugin unhappy and I can't make
+            // the linter use some dummy definition for the macro because its arguments are given
+            // just as a string so nothing with whitespace can be defined }and quotes don't work for
+            // some reason
+            let needs_density_fn = source.contains(DENSITY_FUNCTION_MAGIC);
 
             if needs_density_fn {
-                assert!(!self.density_function.is_none());
-
-                source.push_str("\n\n");
-                source.push_str(self.density_function.as_ref().unwrap());
+                assert!(self.density_function.is_some());
+                source = source.replace(
+                    DENSITY_FUNCTION_MAGIC,
+                    self.density_function.as_ref().unwrap(),
+                );
             }
 
-            let spirv = compile_glsl_to_spirv(
-                &source,
-                rust_target_dir().as_ref().as_ref(),
-                std::str::from_utf8(path.extension().unwrap().as_bytes()).unwrap(),
-            )
-            .map_err(|e| {
-                format!(
-                    "Error compiling shader {:?}:\n{:?}",
-                    path.file_name().unwrap(),
-                    e
-                )
-            })?;
+            let spirv = self
+                .compiler
+                .compile(&source, path.file_name().unwrap().to_str().unwrap())
+                .map_err(|e| format!("Error compiling shader '{path:?}':\n{e}"))?;
 
             let module = device.create_shader_module_spirv(&spirv)?;
 

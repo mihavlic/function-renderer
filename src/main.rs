@@ -57,7 +57,6 @@ use winit::event::{
 };
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
-use write::{compile_glsl_to_spirv, make_density_function};
 use yawpitch::YawPitchZUp;
 
 use crate::write::make_glsl_math;
@@ -222,7 +221,7 @@ fn main() {
                                 graph = Some(ok);
                             }
                             Err(err) => {
-                                eprintln!("Graph compilation error: {err}");
+                                eprintln!("Graph compilation error:\n{err}");
                             }
                         };
                     }

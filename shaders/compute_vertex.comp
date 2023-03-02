@@ -47,7 +47,7 @@ const uvec3[] axes = {
     {0,0,1}
 };
 
-float density(vec4 data);
+float density(vec4 d);
 
 // compute the gradient of the function using finite differences
 // FIXME code duplication

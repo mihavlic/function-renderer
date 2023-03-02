@@ -2,13 +2,16 @@ use crate::parser::{
     self, array_eval, debug_ast, parse_expr, BinaryOperation, Expression, Lane, Parser,
 };
 use graph::device::read_spirv;
+use pumice::vk;
+use shaderc::{IncludeCallbackResult, ShaderKind};
 use std::{
     error::Error,
     f32::consts::FRAC_PI_2,
     fmt::Write,
     fs::File,
-    path::Path,
+    path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
+    str::FromStr,
 };
 
 pub fn write_glsl(node: &Expression) -> String {
@@ -123,63 +126,77 @@ pub fn make_glsl_math(raw_math: &str) -> String {
 #[rustfmt::skip]
 pub fn make_density_function(expr: &str) -> String {
     format!(
-"float density(vec4 data) {{
+"float density(vec4 d) {{
     const float CONSTANT_E = 2.71828182845904523536028747135266250;
     const float CONSTANT_PI = 3.14159265358979323846264338327950288;
     const float CONSTANT_HALF_PI = 1.57079632679489661923132169163975144;
     
-    float x = data.x;
-    float y = data.y;
-    float z = data.z;
-    float t = data.w;
+    float x = d.x;
+    float y = d.y;
+    float z = d.z;
+    float t = d.w;
 
     return {expr};
 }}")
 }
 
-pub fn compile_glsl_to_spirv(
-    source_code: &str,
-    temp_folder: &Path,
-    ending: &str,
-) -> Result<Vec<u32>, Box<dyn Error>> {
-    let file = format!("source.{ending}");
-
-    let source = temp_folder.join(&file);
-    std::fs::write(&source, source_code)?;
-
-    let child = std::process::Command::new("glslangValidator")
-        .arg("--target-env")
-        .arg("vulkan1.1")
-        // -gVS seems to break reflection?
-        .arg("-g")
-        .arg("-o")
-        .arg("compiled.spv")
-        .arg(&file)
-        .current_dir(temp_folder)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to run glslangValidator");
-
-    let output = child.wait_with_output()?;
-
-    if !output.status.success()
-        || std::str::from_utf8(&output.stdout)
-            .map(|str| str.contains("error"))
-            .unwrap_or(false)
-    {
-        let mut err = String::from_utf8_lossy(&output.stderr).to_string();
-        err += &String::from_utf8_lossy(&output.stdout);
-        Err(err)?;
-    }
-
-    let mut compiled = File::open(temp_folder.join("compiled.spv"))?;
-
-    read_spirv(&mut compiled).map_err(|e| e.into())
+pub struct GlslCompiler {
+    compiler: shaderc::Compiler,
+    options: shaderc::CompileOptions<'static>,
 }
 
 pub fn math_into_glsl(math: &str) -> std::thread::Result<String> {
     let glsl_math = std::panic::catch_unwind(|| make_glsl_math(&math))?;
     Ok(make_density_function(&glsl_math))
+}
+
+impl GlslCompiler {
+    pub fn new() -> Self {
+        let compiler = shaderc::Compiler::new().unwrap();
+        let mut options = shaderc::CompileOptions::new().unwrap();
+        options.set_target_env(shaderc::TargetEnv::Vulkan, vk::API_VERSION_1_1);
+        options.set_generate_debug_info();
+        options.set_include_callback(|name, _, _, _| {
+            let path = PathBuf::from_str("shaders").unwrap().join(name);
+            let Ok(full) = path
+                .canonicalize()  else {
+                    return Err(format!("'{path:?}' does not exist"));
+                };
+
+            let Ok(content) = std::fs::read_to_string(&full) else {
+                return Err(format!("'{path:?}' is not a file"));
+            };
+
+            Ok(shaderc::ResolvedInclude {
+                resolved_name: full.to_str().unwrap().to_owned(),
+                content,
+            })
+        });
+
+        Self { compiler, options }
+    }
+    pub fn compile_file(&self, path: &impl AsRef<Path>) -> Result<Vec<u32>, Box<dyn Error>> {
+        let path = path.as_ref();
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return Err(format!("'{path:?}' couldn't be opened").into()); 
+        };
+
+        let spirv = self.compile(&source, path.file_name().unwrap().to_str().unwrap())?;
+        Ok(spirv)
+    }
+    pub fn compile(&self, source: &str, file_name: &str) -> shaderc::Result<Vec<u32>> {
+        let kind = match file_name.rsplit('.').next().unwrap() {
+            "comp" => ShaderKind::Compute,
+            "vert" => ShaderKind::Vertex,
+            "frag" => ShaderKind::Fragment,
+            _ => panic!("Unknown shader file kind for '{file_name}'"),
+        };
+
+        self.compiler
+            .compile_into_spirv(source, kind, file_name, "main", Some(&self.options))
+            .map(|artifact| artifact.as_binary().to_vec())
+    }
+    pub fn set_define(&mut self, name: &str, value: Option<&str>) {
+        self.options.add_macro_definition(name, value);
+    }
 }

@@ -32,10 +32,10 @@ layout(binding = 5, scalar) uniform FunctionData {
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
-float density(vec4 data);
+float density(vec4 d);
 
 void main() {
-    uvec3 global_id = gl_GlobalInvocationID.xyz;    
+    uvec3 global_id = gl_GlobalInvocationID.xyz;
     vec3 pos = vec3(global_id) * function_data.scale - function_data.offset;
 
     float d = density(vec4(pos, function_data.time));
