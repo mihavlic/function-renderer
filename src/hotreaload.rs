@@ -166,7 +166,12 @@ impl ShaderModules {
                 s.density_fn_changed(math_into_glsl(str).unwrap());
             }
             ShaderModulesConfig::WatchStdin => {
-                s.stdin = Some(std::thread::spawn(stdin_watcher));
+                s.stdin = Some(
+                    std::thread::Builder::new()
+                        .name("stdin reader".to_owned())
+                        .spawn(stdin_watcher)
+                        .unwrap(),
+                );
             }
         };
 
