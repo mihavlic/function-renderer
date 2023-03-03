@@ -106,9 +106,7 @@ impl ShaderModules {
 
             let path = PathBuf::from_str(&rust_target_dir())
                 .unwrap()
-                .join("history.txt")
-                .canonicalize()
-                .unwrap();
+                .join("history.txt");
 
             let mut rl = Editor::<()>::new().unwrap();
             rl.load_history(&path);

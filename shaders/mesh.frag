@@ -30,9 +30,23 @@ void main() {
         discard;
     }
 
-    float line = worldPosLine();
-    const float part = 0.4;
-    vec3 normal_color = part + (1.0 - part) * abs(inWorldNormal);
+vec3 ec_normal = normalize(abs(inViewNormal));
+float a = dot(ec_normal, vec3(0.0, 0.0, 1.0));
 
-    outColor = vec4(normal_color * line + 0.2 * abs(dot(inViewNormal, vec3(0.0, 1.0, 0.0))), 1.0);
+#if 1
+    vec3 color = mix(vec3(1.0), abs(inWorldNormal), 0.6);
+    color = mix(vec3(0.0), color, min(a + 0.5, 1.0));
+#else
+    // color mixing code stolen from https://github.com/fstl-app/fstl/blob/master/gl/mesh.frag
+    vec3 base3 = vec3(0.99, 0.96, 0.89);
+    vec3 base2 = vec3(0.92, 0.91, 0.83);
+    vec3 base00 = vec3(0.40, 0.48, 0.51);
+
+    float b = dot(ec_normal, vec3(-0.57, -0.57, 0.57));
+
+    vec3 color = (a*base2 + (1-a)*base00)*0.5 + (b*base3 + (1-b)*base00)*0.5;
+#endif
+
+    float line = worldPosLine();
+    outColor = vec4(color * line, 1.0);
 }
