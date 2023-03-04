@@ -136,7 +136,15 @@ pub fn make_density_function(expr: &str) -> String {
     float z = d.z;
     float t = d.w;
 
-    return {expr};
+    if (
+        x <= 0.5 || x >= 61.5 ||
+        y <= 0.5 || y >= 61.5 ||
+        z <= 0.5 || z >= 61.5
+    ) {{
+        return 0.1;
+    }} else {{
+        return {expr};
+    }}
 }}")
 }
 

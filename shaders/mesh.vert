@@ -19,8 +19,7 @@ void main() {
     vec4 pos = push.projection_matrix * push.model_matrix * vec4(inPosition, 1.0);
 
     outWorldPos = inPosition;
-    // FIXME for some reason normals arrive flipped?
-    outWorldNormal = inNormal.yxz;
+    outWorldNormal = abs(inNormal.yxz);
     outViewNormal = (push.model_matrix * vec4(inPosition + inNormal.xyz, 1.0) ).xyz - (push.model_matrix * vec4(inPosition, 1.0)).xyz;
     outViewPos = pos.xyz;
     gl_Position = pos;

@@ -4,7 +4,7 @@ struct Vertex {
 };
 
 layout(binding = 0, r16f) uniform image3D function_values;
-layout(binding = 1, rgba8) uniform image3D intersections;
+layout(binding = 1, rgba16_snorm) uniform image3D intersections;
 layout(binding = 2, r32ui) uniform uimage3D vertex_indices;
 layout(binding = 3, scalar) buffer VertexData {
     uint size;

@@ -55,6 +55,11 @@ struct MetaModuleEntry {
     dirty: bool,
 }
 
+struct SimpleFileEntry {
+    generation: u32,
+    dirty: bool,
+}
+
 #[derive(PartialEq, Eq)]
 pub enum PollResult {
     Recreate,
@@ -70,6 +75,7 @@ struct StdinWatcherData {
 pub struct ShaderModules {
     density_function: Option<String>,
     modules: HashMap<PathBuf, MetaModuleEntry>,
+    simple_files: HashMap<PathBuf, SimpleFileEntry>,
     watcher: notify::RecommendedWatcher,
     receiver: Receiver<AsyncEvent>,
     stdin: Option<JoinHandle<()>>,
@@ -153,6 +159,7 @@ impl ShaderModules {
         let mut s = Self {
             density_function: None,
             modules: Default::default(),
+            simple_files: Default::default(),
             watcher,
             receiver,
             stdin: None,
@@ -185,10 +192,20 @@ impl ShaderModules {
     }
     fn remove_dirty_files(&mut self, dirty: &[PathBuf]) {
         for path in dirty {
-            if let Some(m) = self.modules.get_mut(path) {
-                m.dirty = true;
-            }
+            self.invalidate_file_impl(path);
         }
+    }
+    fn invalidate_file_impl(&mut self, path: &PathBuf) {
+        if let Some(m) = self.modules.get_mut(path) {
+            m.dirty = true;
+        }
+        if let Some(m) = self.simple_files.get_mut(path) {
+            m.dirty = true;
+        }
+    }
+    pub fn invalidate_file(&mut self, path: &(impl AsRef<Path> + ?Sized)) {
+        let path = path.as_ref().canonicalize().unwrap();
+        self.invalidate_file_impl(&path);
     }
     pub fn poll(&mut self) -> PollResult {
         let mut new_density_function = String::new();
@@ -235,6 +252,31 @@ impl ShaderModules {
         }
 
         status
+    }
+    pub fn retrieve_simple(&mut self, path: impl AsRef<Path>) -> u32 {
+        let path = path.as_ref().canonicalize().unwrap();
+        match self.simple_files.entry(path.clone()) {
+            Entry::Occupied(mut exists) => {
+                let meta = exists.get_mut();
+                if meta.dirty {
+                    meta.generation += 1;
+                    meta.dirty = false;
+                }
+                meta.generation
+            }
+            Entry::Vacant(no) => {
+                no.insert(SimpleFileEntry {
+                    generation: 0,
+                    dirty: false,
+                });
+
+                assert!(path.exists());
+                self.watcher
+                    .watch(&path, notify::RecursiveMode::NonRecursive);
+
+                0
+            }
+        }
     }
     pub unsafe fn retrieve(
         &mut self,

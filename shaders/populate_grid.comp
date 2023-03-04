@@ -14,5 +14,7 @@ void main() {
 
     float d = density(vec4(pos, function_data.time));
 
+    // d = density(vec4(pos, function_data.time));
+    
     imageStore(function_values, ivec3(global_id.xyz), vec4(d));
 }

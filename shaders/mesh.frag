@@ -22,19 +22,20 @@ float worldPosLine() {
 }
 
 void main() {
-    if (
-        inWorldPos.x < 0.5 || inWorldPos.x > 62.0 ||
-        inWorldPos.y < 0.5 || inWorldPos.y > 62.0 ||
-        inWorldPos.z < 0.5 || inWorldPos.z > 62.0
-    ) {
-        discard;
-    }
+    // if (
+    //     inWorldPos.x < 0.5 || inWorldPos.x > 62.0 ||
+    //     inWorldPos.y < 0.5 || inWorldPos.y > 62.0 ||
+    //     inWorldPos.z < 0.5 || inWorldPos.z > 62.0
+    // ) {
+    //     discard;
+    // }
 
-vec3 ec_normal = normalize(abs(inViewNormal));
-float a = dot(ec_normal, vec3(0.0, 0.0, 1.0));
+    vec3 ec_normal = normalize(cross(dFdx(inViewPos), dFdy(inViewPos)));
+
+    float a = dot(ec_normal, vec3(0.0, 0.0, 1.0));
 
 #if 1
-    vec3 color = mix(vec3(1.0), abs(inWorldNormal), 0.6);
+    vec3 color = mix(vec3(1.0), inWorldNormal, 0.6);
     color = mix(vec3(0.0), color, min(a + 0.5, 1.0));
 #else
     // color mixing code stolen from https://github.com/fstl-app/fstl/blob/master/gl/mesh.frag

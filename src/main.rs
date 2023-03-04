@@ -254,8 +254,6 @@ unsafe fn make_graph(
     cache: &mut RecomputationCache,
     device: &device::OwnedDevice,
 ) -> Result<CompiledGraph, Box<dyn Error>> {
-    let mut cache = RefCell::new(cache);
-
     macro_rules! args {
         ($($arg:expr),*) => {
             |state| {
@@ -267,9 +265,19 @@ unsafe fn make_graph(
         };
     }
 
+    let common = modules.retrieve_simple("shaders/common.h");
+
+    let mut cache = RefCell::new(cache);
+
     let mut create_pipeline = |path: &str, needs_eval_fn: bool| -> Result<_, Box<dyn Error>> {
-        let module = modules.retrieve(path, device)?;
         let mut cache = cache.borrow_mut();
+
+        // this is getting criminal
+        cache.compute_located(args!(path), args!(common), || {
+            modules.invalidate_file(path);
+        });
+        let module = modules.retrieve(path, device)?;
+
         let all_layout =
             cache.get_or_insert_named::<object::PipelineLayout, _>("all layout", || {
                 ReflectedLayout::new(&[SpirvModule {
@@ -283,7 +291,7 @@ unsafe fn make_graph(
                 .unwrap()
             });
 
-        let pipeline = cache.compute_located(args!(path), args!(module), || {
+        let pipeline = cache.compute_located(args!(path), args!(common, module), || {
             let pipeline_info = object::ComputePipelineCreateInfo {
                 flags: vk::PipelineCreateFlags::empty(),
                 stage: PipelineStage {
@@ -361,7 +369,7 @@ unsafe fn make_graph(
         "function_values",
     );
     let intersections = create_image(
-        vk::Format::R8G8B8A8_UNORM,
+        vk::Format::R16G16B16A16_SNORM,
         object::Extent::D3(64 * 3, 64, 64),
         "intersections",
     );

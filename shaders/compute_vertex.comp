@@ -12,7 +12,7 @@
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 #include "compute_descriptors.glsl"
-#include "common.glsl"
+#include "common.h"
 
 float density(vec4 d);
 
@@ -136,7 +136,7 @@ void main() {
     for (int i = 0; i < 12; i++) {
         vec4 intersection = edges[i];
         // zero is a special value
-        if (intersection.w > 0.0) {
+        if (intersection.w != 0.0) {
             vec3 cellspace_point = vec3(edge_vertices[i]) + intersection.w * vec3(axes[i / 4]);
 
             // ax + by + cz + q = 0
@@ -156,9 +156,10 @@ void main() {
 
     // the vertex is first approximated by the average of intersections
     vec3 cellspace_vertex = intersections_sum / float(intersections_count);
+    // cellspace_vertex = vec3(0.5);
 
     // iteratively move the point according to the distance to the intersection planes
-    for (int iter = 0; iter < 5; iter++) {
+    for (int iter = 0; iter < 20; iter++) {
         vec3 force = vec3(0.0);
         for (int i = 0; i < 12; i++) {
             vec4 intersection = edges[i];
@@ -169,21 +170,20 @@ void main() {
                 float plane_distance = dot(normal, cellspace_vertex) + q;
                 force += plane_distance * normal;
             }
-
         }
-        cellspace_vertex -= 
+        vec3 move = 
             // move closer to the planes of the intersections
-            0.5 * (force / float(intersections_count)) + 
-            // nudge a tiny amount towards the cell center, allegedly it improves the quality
-            0.001 * (cellspace_vertex - vec3(0.5));
+            0.7 * force / float(intersections_count)
+            // nudge a tiny amount towards the cell center, allegedly it improves quality
+            + 0.001 * (cellspace_vertex - vec3(0.5));
+
+        cellspace_vertex -= move;
     }
 
-    // we are bump allocating vertices, a stream compaction pass would probably be more efficient
-    // but it seems to be very complicated and no very worth it at this stage
-    // instead we use subgroup operation to do a prefix some over invocations which have a vertex to
-    // write and then bump allocate this whole block, then each invocation writes its vertex to the predetermined index
-
-
+// we are bump allocating vertices, a stream compaction pass would probably be more efficient
+// but it seems to be very complicated and no very worth it at this stage
+// instead we use subgroup operation to do a prefix some over invocations which have a vertex to
+// write and then bump allocate this whole block, then each invocation writes its vertex to the predetermined index
 #ifdef USE_SUBGROUP_OPS
     // prefix sum to find out the subgroup local index of the output vertex
     uint inclusive_vertex_batch_offset = subgroupInclusiveAdd(1);

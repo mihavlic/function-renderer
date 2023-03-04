@@ -2,7 +2,7 @@ float density(vec4 d);
 
 // compute the gradient of the function using finite differences
 vec3 calculate_gradient(vec3 pos) {
-    const float d = 0.05;
+    const float d = 0.01;
     
     float x = pos.x;
     float y = pos.y;
@@ -21,5 +21,12 @@ vec3 calculate_gradient(vec3 pos) {
     float dz = (density(vec4(x, y, z + d, t)) - density(vec4(x, y, z - d, t))) / (2.0 * d);
 #endif
 
+    // vec2 n = vec2(1.0, 1.0);
+    // if (density(vec4(pos, function_data.time)) < 0.0) {
+    //     n = -n; 
+    // }
+   
+    // return vec3(n, -1.0);
+    
     return vec3(dx, dy, dz);
 }
