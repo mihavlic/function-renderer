@@ -35,24 +35,6 @@ vec4 get_edge(uvec3 pos, uint axis) {
     return imageLoad(intersections, ivec3(index));
 }
 
-// stolen from https://www.gamedev.net/forums/topic/685081-normal-vector-artifacts-with-nvmeshmender/
-uint pack_A2B10G10R10_SNORM_PACK32(vec4 vector) {
-    vec4 c = clamp(vector, -1.0, 1.0);
-
-    const uint xs = c.x < 0 ? 1 : 0;
-    const uint ys = c.y < 0 ? 1 : 0;
-    const uint zs = c.z < 0 ? 1 : 0;
-    const uint ws = c.w < 0 ? 1 : 0;
-
-    return uint
-    (
-        ws << 31 | (uint(c.w       + (ws << 1)) &   1) << 30 |
-        zs << 29 | (uint(c.z * 511 + (zs << 9)) & 511) << 20 |
-        ys << 19 | (uint(c.y * 511 + (ys << 9)) & 511) << 10 |
-        xs <<  9 | (uint(c.x * 511 + (xs << 9)) & 511)
-    );
-}
-
 const uint INDEX_INVALID = 4294967295;
 
 void main() {
@@ -208,12 +190,9 @@ void main() {
     // if we've reached the capacity of the vertex buffer, just throw away the vertex
     if (index < vertices.size) {
         vec3 position = vec3(A) + cellspace_vertex;
-        vec3 normal = normalize(calculate_gradient(position));
-        uint packed_normal = pack_A2B10G10R10_SNORM_PACK32(vec4(normal, 0.0));
 
         Vertex vertex = {
-            position,
-            packed_normal,
+            position
         };
 
         vertices.vertices[index] = vertex;

@@ -2,9 +2,7 @@
 #extension GL_ARB_separate_shader_objects : enable
 
 layout(location = 0) in vec3 inWorldPos;
-layout(location = 1) in vec3 inWorldNormal;
-layout(location = 2) in vec3 inViewNormal;
-layout(location = 3) in vec3 inViewPos;
+layout(location = 1) in vec3 inViewPos;
 
 layout(location = 0) out vec4 outColor;
 
@@ -30,12 +28,13 @@ void main() {
     //     discard;
     // }
 
-    vec3 ec_normal = normalize(cross(dFdx(inViewPos), dFdy(inViewPos)));
+    vec3 world_normal = abs(normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos))));
+    vec3 view_normal = normalize(cross(dFdx(inViewPos), dFdy(inViewPos)));
 
-    float a = dot(ec_normal, vec3(0.0, 0.0, 1.0));
+    float a = dot(view_normal, vec3(0.0, 0.0, 1.0));
 
 #if 1
-    vec3 color = mix(vec3(1.0), inWorldNormal, 0.6);
+    vec3 color = mix(vec3(1.0), world_normal, 0.6);
     color = mix(vec3(0.0), color, min(a + 0.5, 1.0));
 #else
     // color mixing code stolen from https://github.com/fstl-app/fstl/blob/master/gl/mesh.frag
@@ -43,7 +42,7 @@ void main() {
     vec3 base2 = vec3(0.92, 0.91, 0.83);
     vec3 base00 = vec3(0.40, 0.48, 0.51);
 
-    float b = dot(ec_normal, vec3(-0.57, -0.57, 0.57));
+    float b = dot(view_normal, vec3(-0.57, -0.57, 0.57));
 
     vec3 color = (a*base2 + (1-a)*base00)*0.5 + (b*base3 + (1-b)*base00)*0.5;
 #endif

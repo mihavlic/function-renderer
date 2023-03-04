@@ -454,24 +454,16 @@ unsafe fn make_graph(
                     vertex_bindings: [object::state::InputBinding {
                         binding: 0,
                         // 3 floats for position, 1 uint for B10G11R11 normal
-                        stride: 3 * 4 + 4,
+                        stride: 3 * 4,
                         input_rate: vk::VertexInputRate::VERTEX,
                     }]
                     .to_vec(),
-                    vertex_attributes: [
-                        object::state::InputAttribute {
-                            location: 0,
-                            binding: 0,
-                            format: vk::Format::R32G32B32_SFLOAT,
-                            offset: 0,
-                        },
-                        object::state::InputAttribute {
-                            location: 1,
-                            binding: 0,
-                            format: vk::Format::A2B10G10R10_SNORM_PACK32,
-                            offset: 3 * 4,
-                        },
-                    ]
+                    vertex_attributes: [object::state::InputAttribute {
+                        location: 0,
+                        binding: 0,
+                        format: vk::Format::R32G32B32_SFLOAT,
+                        offset: 0,
+                    }]
                     .to_vec(),
                 })
                 .rasterization(object::state::Rasterization {

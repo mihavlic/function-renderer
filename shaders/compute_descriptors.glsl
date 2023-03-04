@@ -1,6 +1,5 @@
 struct Vertex {
-    vec3 position; 
-    uint packed_normal;
+    vec3 position;
 };
 
 layout(binding = 0, r16f) uniform image3D function_values;
