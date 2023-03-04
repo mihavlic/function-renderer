@@ -61,6 +61,8 @@ use yawpitch::YawPitchZUp;
 
 use crate::write::make_glsl_math;
 
+pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C8;
+
 fn main() {
     unsafe {
         install_tracing_subscriber(None);
@@ -75,10 +77,8 @@ fn main() {
         let swapchain = make_swapchain(&window, surface, &device);
 
         let mut modules = ShaderModules::new(
-            ShaderModulesConfig::WatchStdin,
-            // ShaderModulesConfig::Static(
-            //     "sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z",
-            // )
+            // ShaderModulesConfig::WatchStdin,
+            ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
         );
         let mut cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
@@ -173,6 +173,7 @@ fn main() {
                     match modules.poll() {
                         PollResult::Recreate => rebuild_graph = true,
                         PollResult::Skip => return,
+                        PollResult::Ok if graph.is_none() => rebuild_graph = true,
                         PollResult::Ok => {}
                         PollResult::Exit => exit = true,
                     }
@@ -342,20 +343,27 @@ unsafe fn make_graph(
     };
 
     let create_buffer = |usage: vk::BufferUsageFlags, size: u64, label: &'static str| {
-        device.create_buffer(
-            object::BufferCreateInfo {
-                flags: vk::BufferCreateFlags::empty(),
-                size,
-                usage,
-                sharing_mode_concurrent: false,
-                label: Some(label.into()),
-            },
-            vma::AllocationCreateInfo {
-                flags: vma::AllocationCreateFlags::empty(),
-                usage: vma::MemoryUsage::AutoPreferDevice,
-                ..Default::default()
-            },
-        )
+        let mut cache = cache.borrow_mut();
+        cache
+            .compute_named(label, args!(usage, size), || {
+                device
+                    .create_buffer(
+                        object::BufferCreateInfo {
+                            flags: vk::BufferCreateFlags::empty(),
+                            size,
+                            usage,
+                            sharing_mode_concurrent: false,
+                            label: Some(label.into()),
+                        },
+                        vma::AllocationCreateInfo {
+                            flags: vma::AllocationCreateFlags::empty(),
+                            usage: vma::MemoryUsage::AutoPreferDevice,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+            })
+            .into_inner()
     };
 
     let populate_grid = create_pipeline("shaders/populate_grid.comp", true)?;
@@ -389,7 +397,7 @@ unsafe fn make_graph(
             | vk::BufferUsageFlags::VERTEX_BUFFER,
         (VERTEX_CAPACITY * 3 * 4) as u64,
         "vertices",
-    )?;
+    );
     let indices = create_buffer(
         vk::BufferUsageFlags::TRANSFER_SRC
             | vk::BufferUsageFlags::TRANSFER_DST
@@ -397,7 +405,7 @@ unsafe fn make_graph(
             | vk::BufferUsageFlags::INDEX_BUFFER,
         (INDEX_CAPACITY * 4) as u64,
         "indices",
-    )?;
+    );
 
     let vert_module = modules.retrieve("shaders/mesh.vert", device)?;
     let frag_module = modules.retrieve("shaders/mesh.frag", device)?;
@@ -476,7 +484,8 @@ unsafe fn make_graph(
                     ..Default::default()
                 })
                 .multisample(object::state::Multisample {
-                    rasterization_samples: vk::SampleCountFlags::C1,
+                    rasterization_samples: MSAA_SAMPLE_COUNT,
+                    sample_shading_enable: false,
                     ..Default::default()
                 })
                 .depth_stencil(object::state::DepthStencil {
@@ -513,7 +522,7 @@ unsafe fn make_graph(
 
     let graph = compiler.compile(device.clone(), |b| {
         let queue = b.import_queue(queue);
-        // let swapchain = b.acquire_swapchain(swapchain.clone());
+        let swapchain_image = b.acquire_swapchain(swapchain.clone());
 
         let function_values = b.import_image((function_values, "function_values"));
         let intersections = b.import_image((intersections, "intersections"));
@@ -630,8 +639,8 @@ unsafe fn make_graph(
             object::ImageCreateInfo {
                 flags: vk::ImageCreateFlags::empty(),
                 size: object::Extent::D2(swapchain_size.width, swapchain_size.height),
-                format: vk::Format::D16_UNORM,
-                samples: vk::SampleCountFlags::C1,
+                format: vk::Format::D32_SFLOAT,
+                samples: MSAA_SAMPLE_COUNT,
                 mip_levels: 1,
                 array_layers: 1,
                 tiling: vk::ImageTiling::OPTIMAL,
@@ -639,6 +648,28 @@ unsafe fn make_graph(
                 sharing_mode_concurrent: false,
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 label: Some("depth".into()),
+            },
+            vma::AllocationCreateInfo {
+                flags: vma::AllocationCreateFlags::empty(),
+                usage: vma::MemoryUsage::Unknown,
+                required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                ..Default::default()
+            },
+        );
+        let color = b.create_image(
+            object::ImageCreateInfo {
+                flags: vk::ImageCreateFlags::empty(),
+                size: object::Extent::D2(swapchain_size.width, swapchain_size.height),
+                format: vk::Format::B8G8R8A8_UNORM,
+                samples: MSAA_SAMPLE_COUNT,
+                mip_levels: 1,
+                array_layers: 1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                    | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+                sharing_mode_concurrent: false,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                label: Some("color".into()),
             },
             vma::AllocationCreateInfo {
                 flags: vma::AllocationCreateFlags::empty(),
@@ -663,7 +694,6 @@ unsafe fn make_graph(
                 ..Default::default()
             },
         );
-        let swapchain = b.acquire_swapchain(swapchain.clone());
 
         b.add_pass(
             queue,
@@ -914,11 +944,18 @@ unsafe fn make_graph(
             "Prepare indirect draw",
         );
 
+        let (attachments, resolve_attachments) = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
+            (vec![swapchain_image], vec![])
+        } else {
+            (vec![color], vec![swapchain_image])
+        };
+
         b.add_pass(
             queue,
             mesh_pass::SimpleShader {
                 pipeline,
-                attachments: vec![swapchain],
+                attachments,
+                resolve_attachments,
                 depth: Some(depth),
                 vertices,
                 indices,
@@ -956,7 +993,7 @@ unsafe fn make_device(
     let info = InstanceCreateInfo {
         config: &mut conf,
         validation_layers: &[
-            // pumice::cstr!("VK_LAYER_KHRONOS_validation"),
+            pumice::cstr!("VK_LAYER_KHRONOS_validation"),
             // pumice::cstr!("VK_LAYER_LUNARG_api_dump"),
         ],
         enable_debug_callback: true,

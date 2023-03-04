@@ -11,13 +11,14 @@ use graph::{
     passes::{CreatePass, RenderPass},
     smallvec::SmallVec,
 };
-use pumice::vk;
+use pumice::{util::ObjectHandle, vk};
 
 use crate::arcball::ArcballCamera;
 
 pub struct SimpleShader {
     pub pipeline: GraphicsPipeline,
     pub attachments: Vec<GraphImage>,
+    pub resolve_attachments: Vec<GraphImage>,
     pub depth: Option<GraphImage>,
     pub vertices: GraphBuffer,
     pub indices: GraphBuffer,
@@ -31,41 +32,51 @@ impl CreatePass for SimpleShader {
         for &image in &self.attachments {
             builder.use_image(
                 image,
-                vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
                 vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
                 vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                 None,
             );
-            if let Some(depth) = self.depth {
-                builder.use_image(
-                    depth,
-                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                    vk::PipelineStageFlags2KHR::EARLY_FRAGMENT_TESTS,
-                    vk::AccessFlags2KHR::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                    None,
-                );
-            }
-            builder.use_buffer(
-                self.draw_parameter_buffer,
-                vk::BufferUsageFlags::INDIRECT_BUFFER,
-                vk::PipelineStageFlags2KHR::DRAW_INDIRECT,
-                vk::AccessFlags2KHR::INDIRECT_COMMAND_READ,
-            );
-            builder.use_buffer(
-                self.indices,
-                vk::BufferUsageFlags::INDEX_BUFFER,
-                vk::PipelineStageFlags2KHR::INDEX_INPUT,
-                vk::AccessFlags2KHR::INDEX_READ,
-            );
-            builder.use_buffer(
-                self.vertices,
-                vk::BufferUsageFlags::VERTEX_BUFFER,
-                vk::PipelineStageFlags2KHR::VERTEX_INPUT,
-                vk::AccessFlags2KHR::VERTEX_ATTRIBUTE_READ,
+        }
+        for &image in &self.resolve_attachments {
+            builder.use_image(
+                image,
+                vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                vk::PipelineStageFlags2KHR::ALL_COMMANDS,
+                vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
+                vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                None,
             );
         }
+        if let Some(depth) = self.depth {
+            builder.use_image(
+                depth,
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                vk::PipelineStageFlags2KHR::EARLY_FRAGMENT_TESTS,
+                vk::AccessFlags2KHR::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                None,
+            );
+        }
+        builder.use_buffer(
+            self.draw_parameter_buffer,
+            vk::BufferUsageFlags::INDIRECT_BUFFER,
+            vk::PipelineStageFlags2KHR::DRAW_INDIRECT,
+            vk::AccessFlags2KHR::INDIRECT_COMMAND_READ,
+        );
+        builder.use_buffer(
+            self.indices,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            vk::PipelineStageFlags2KHR::INDEX_INPUT,
+            vk::AccessFlags2KHR::INDEX_READ,
+        );
+        builder.use_buffer(
+            self.vertices,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::PipelineStageFlags2KHR::VERTEX_INPUT,
+            vk::AccessFlags2KHR::VERTEX_ATTRIBUTE_READ,
+        );
         let mode = RenderPassMode::Dynamic {
             view_mask: 0,
             colors: self
@@ -110,22 +121,54 @@ impl RenderPass for SimpleShaderPass {
         let d = device.device();
         let cmd = executor.command_buffer();
 
+        let attachments_len = self.info.attachments.len();
+        let resolve_attachments_len = self.info.resolve_attachments.len();
+        assert!(attachments_len == resolve_attachments_len || resolve_attachments_len == 0);
+
         let attachments = self
             .info
             .attachments
             .iter()
-            .map(|&image| vk::RenderingAttachmentInfoKHR {
-                image_view: executor.get_default_image_view(image),
-                image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                resolve_mode: vk::ResolveModeFlagsKHR::NONE,
-                load_op: vk::AttachmentLoadOp::CLEAR,
-                store_op: vk::AttachmentStoreOp::STORE,
-                clear_value: vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float_32: [0.0, 0.0, 0.0, 1.0],
+            .zip(
+                self.info
+                    .resolve_attachments
+                    .iter()
+                    .copied()
+                    .map(Some)
+                    .chain(std::iter::repeat(None)),
+            )
+            .map(|(&image, resolve)| {
+                let (resolve_mode, resolve_image_layout, resolve_image_view, store_op) =
+                    match resolve {
+                        Some(resolve) => (
+                            vk::ResolveModeFlagsKHR::AVERAGE,
+                            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                            executor.get_default_image_view(resolve),
+                            vk::AttachmentStoreOp::DONT_CARE,
+                        ),
+                        None => (
+                            vk::ResolveModeFlagsKHR::NONE,
+                            vk::ImageLayout::UNDEFINED,
+                            vk::ImageView::null(),
+                            vk::AttachmentStoreOp::STORE,
+                        ),
+                    };
+
+                vk::RenderingAttachmentInfoKHR {
+                    image_view: executor.get_default_image_view(image),
+                    image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    resolve_mode,
+                    resolve_image_layout,
+                    resolve_image_view,
+                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    store_op,
+                    clear_value: vk::ClearValue {
+                        color: vk::ClearColorValue {
+                            float_32: [0.0, 0.0, 0.0, 1.0],
+                        },
                     },
-                },
-                ..Default::default()
+                    ..Default::default()
+                }
             })
             .collect::<SmallVec<[_; 8]>>();
 
@@ -141,7 +184,7 @@ impl RenderPass for SimpleShaderPass {
                 image_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                 resolve_mode: vk::ResolveModeFlagsKHR::NONE,
                 load_op: vk::AttachmentLoadOp::CLEAR,
-                store_op: vk::AttachmentStoreOp::STORE,
+                store_op: vk::AttachmentStoreOp::DONT_CARE,
                 clear_value: vk::ClearValue {
                     depth_stencil: vk::ClearDepthStencilValue {
                         depth: 1.0,
