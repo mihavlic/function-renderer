@@ -61,7 +61,7 @@ use yawpitch::YawPitchZUp;
 
 use crate::write::make_glsl_math;
 
-pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C8;
+pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
 
 fn main() {
     unsafe {
@@ -78,7 +78,8 @@ fn main() {
 
         let mut modules = ShaderModules::new(
             // ShaderModulesConfig::WatchStdin,
-            ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
+            // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
+            ShaderModulesConfig::Static("30 - z"),
         );
         let mut cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
@@ -461,7 +462,7 @@ unsafe fn make_graph(
                 .vertex_input(object::state::VertexInput {
                     vertex_bindings: [object::state::InputBinding {
                         binding: 0,
-                        // 3 floats for position, 1 uint for B10G11R11 normal
+                        // 3 floats for position
                         stride: 3 * 4,
                         input_rate: vk::VertexInputRate::VERTEX,
                     }]
@@ -479,7 +480,7 @@ unsafe fn make_graph(
                     rasterizer_discard_enable: false,
                     polygon_mode: vk::PolygonMode::FILL,
                     cull_mode: vk::CullModeFlags::NONE,
-                    front_face: vk::FrontFace::CLOCKWISE,
+                    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
                     line_width: 1.0,
                     ..Default::default()
                 })
@@ -665,8 +666,7 @@ unsafe fn make_graph(
                 mip_levels: 1,
                 array_layers: 1,
                 tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
-                    | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
                 sharing_mode_concurrent: false,
                 initial_layout: vk::ImageLayout::UNDEFINED,
                 label: Some("color".into()),
@@ -750,8 +750,7 @@ unsafe fn make_graph(
                         function_values,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
-                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                         vk::ImageLayout::GENERAL,
                         None,
                     );
@@ -786,8 +785,7 @@ unsafe fn make_graph(
                         intersections,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
-                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                         vk::ImageLayout::GENERAL,
                         None,
                     );
@@ -822,8 +820,7 @@ unsafe fn make_graph(
                         vertex_indices,
                         vk::ImageUsageFlags::STORAGE,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
-                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                         vk::ImageLayout::GENERAL,
                         None,
                     );
@@ -831,8 +828,7 @@ unsafe fn make_graph(
                         vertices,
                         vk::BufferUsageFlags::STORAGE_BUFFER,
                         vk::PipelineStageFlags2KHR::COMPUTE_SHADER,
-                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE
-                            | vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
+                        vk::AccessFlags2KHR::SHADER_STORAGE_WRITE,
                     );
                 },
                 move |e, device| {
@@ -950,7 +946,7 @@ unsafe fn make_graph(
             (vec![color], vec![swapchain_image])
         };
 
-        b.add_pass(
+        let draw = b.add_pass(
             queue,
             mesh_pass::SimpleShader {
                 pipeline,
@@ -964,6 +960,90 @@ unsafe fn make_graph(
             },
             "Draw triangles",
         );
+
+        // b.add_pass(
+        //     queue,
+        //     LambdaPass(
+        //         move |builder| {
+        //             builder.use_image(
+        //                 swapchain_image,
+        //                 vk::ImageUsageFlags::TRANSFER_DST,
+        //                 vk::PipelineStageFlags2KHR::TRANSFER,
+        //                 vk::AccessFlags2KHR::TRANSFER_WRITE,
+        //                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        //                 None,
+        //             );
+        //         },
+        //         move |e, d| {
+        //             let (d, cmd) = (d.device(), e.command_buffer());
+        //             d.cmd_clear_color_image(
+        //                 cmd,
+        //                 e.get_image(swapchain_image),
+        //                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        //                 &vk::ClearColorValue {
+        //                     float_32: [1.0, 0.0, 1.0, 1.0],
+        //                 },
+        //                 &[e.get_image_subresource_range(
+        //                     swapchain_image,
+        //                     vk::ImageAspectFlags::COLOR,
+        //                 )],
+        //             );
+        //         },
+        //     ),
+        //     "Clear swapchain",
+        // );
+
+        // let resolve = b.add_pass(
+        //     queue,
+        //     LambdaPass(
+        //         move |builder| {
+        //             builder.use_image(
+        //                 color,
+        //                 vk::ImageUsageFlags::TRANSFER_SRC,
+        //                 vk::PipelineStageFlags2KHR::TRANSFER,
+        //                 vk::AccessFlags2KHR::TRANSFER_READ,
+        //                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        //                 None,
+        //             );
+        //             builder.use_image(
+        //                 swapchain_image,
+        //                 vk::ImageUsageFlags::TRANSFER_DST,
+        //                 vk::PipelineStageFlags2KHR::TRANSFER,
+        //                 vk::AccessFlags2KHR::TRANSFER_WRITE,
+        //                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        //                 None,
+        //             );
+        //         },
+        //         move |e, d| {
+        //             let (d, cmd) = (d.device(), e.command_buffer());
+        //             let extent = e.get_image_extent(color);
+
+        //             d.cmd_resolve_image(
+        //                 cmd,
+        //                 e.get_image(color),
+        //                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        //                 e.get_image(swapchain_image),
+        //                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        //                 &[vk::ImageResolve {
+        //                     src_subresource: e.get_image_subresource_layers_concrete(
+        //                         color,
+        //                         vk::ImageAspectFlags::COLOR,
+        //                         0,
+        //                     ),
+        //                     src_offset: vk::Offset3D::default(),
+        //                     dst_subresource: e.get_image_subresource_layers_concrete(
+        //                         swapchain_image,
+        //                         vk::ImageAspectFlags::COLOR,
+        //                         0,
+        //                     ),
+        //                     dst_offset: vk::Offset3D::default(),
+        //                     extent: extent.as_extent_3d(),
+        //                 }],
+        //             );
+        //         },
+        //     ),
+        //     "Resolve color to swapchain",
+        // );
     });
 
     Ok(graph)
@@ -1092,7 +1172,7 @@ unsafe fn make_swapchain(
         color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
         extent,
         array_layers: 1,
-        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
         pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
         composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
         present_mode,

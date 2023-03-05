@@ -13,8 +13,6 @@ void main() {
     vec3 pos = vec3(global_id) * function_data.scale - function_data.offset;
 
     float d = density(vec4(pos, function_data.time));
-
-    // d = density(vec4(pos, function_data.time));
     
     imageStore(function_values, ivec3(global_id.xyz), vec4(d));
 }

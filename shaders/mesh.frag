@@ -20,14 +20,6 @@ float worldPosLine() {
 }
 
 void main() {
-    // if (
-    //     inWorldPos.x < 0.5 || inWorldPos.x > 62.0 ||
-    //     inWorldPos.y < 0.5 || inWorldPos.y > 62.0 ||
-    //     inWorldPos.z < 0.5 || inWorldPos.z > 62.0
-    // ) {
-    //     discard;
-    // }
-
     vec3 world_normal = abs(normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos))));
     vec3 view_normal = normalize(cross(dFdx(inViewPos), dFdy(inViewPos)));
 

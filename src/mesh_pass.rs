@@ -10,6 +10,7 @@ use graph::{
     object::{self, ConcreteGraphicsPipeline, Extent, GraphicsPipeline, RenderPassMode},
     passes::{CreatePass, RenderPass},
     smallvec::SmallVec,
+    util::ffi_ptr::AsFFiPtr,
 };
 use pumice::{util::ObjectHandle, vk};
 
@@ -32,7 +33,7 @@ impl CreatePass for SimpleShader {
         for &image in &self.attachments {
             builder.use_image(
                 image,
-                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+                vk::ImageUsageFlags::COLOR_ATTACHMENT,
                 vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
                 vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
                 vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
@@ -43,7 +44,7 @@ impl CreatePass for SimpleShader {
             builder.use_image(
                 image,
                 vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                vk::PipelineStageFlags2KHR::ALL_COMMANDS,
+                vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
                 vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
                 vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                 None,
@@ -138,28 +139,28 @@ impl RenderPass for SimpleShaderPass {
                     .chain(std::iter::repeat(None)),
             )
             .map(|(&image, resolve)| {
-                let (resolve_mode, resolve_image_layout, resolve_image_view, store_op) =
+                let (resolve_mode, resolve_image_view, resolve_image_layout, store_op) =
                     match resolve {
                         Some(resolve) => (
                             vk::ResolveModeFlagsKHR::AVERAGE,
-                            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                             executor.get_default_image_view(resolve),
-                            vk::AttachmentStoreOp::DONT_CARE,
+                            vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                            vk::AttachmentStoreOp::STORE,
                         ),
                         None => (
                             vk::ResolveModeFlagsKHR::NONE,
-                            vk::ImageLayout::UNDEFINED,
                             vk::ImageView::null(),
+                            vk::ImageLayout::UNDEFINED,
                             vk::AttachmentStoreOp::STORE,
                         ),
                     };
 
                 vk::RenderingAttachmentInfoKHR {
                     image_view: executor.get_default_image_view(image),
-                    image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    image_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                     resolve_mode,
-                    resolve_image_layout,
                     resolve_image_view,
+                    resolve_image_layout,
                     load_op: vk::AttachmentLoadOp::CLEAR,
                     store_op,
                     clear_value: vk::ClearValue {
@@ -177,14 +178,14 @@ impl RenderPass for SimpleShaderPass {
             Extent::D1(_) | Extent::D3(_, _, _) => panic!("Attachments must be 2D images"),
         };
 
-        let mut depth = vk::RenderingAttachmentInfoKHR::default();
+        let mut depth = None;
         if let Some(image) = self.info.depth {
-            depth = vk::RenderingAttachmentInfoKHR {
+            depth = Some(vk::RenderingAttachmentInfoKHR {
                 image_view: executor.get_default_image_view(image),
                 image_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                 resolve_mode: vk::ResolveModeFlagsKHR::NONE,
                 load_op: vk::AttachmentLoadOp::CLEAR,
-                store_op: vk::AttachmentStoreOp::DONT_CARE,
+                store_op: vk::AttachmentStoreOp::STORE,
                 clear_value: vk::ClearValue {
                     depth_stencil: vk::ClearDepthStencilValue {
                         depth: 1.0,
@@ -192,7 +193,7 @@ impl RenderPass for SimpleShaderPass {
                     },
                 },
                 ..Default::default()
-            };
+            });
         }
 
         let info = vk::RenderingInfoKHR {
@@ -203,17 +204,37 @@ impl RenderPass for SimpleShaderPass {
             layer_count: 1,
             view_mask: 0,
             color_attachment_count: attachments.len() as u32,
-            p_color_attachments: attachments.as_ptr(),
-            p_depth_attachment: self
-                .info
-                .depth
-                .map(|_| &depth as *const _)
-                .unwrap_or(std::ptr::null()),
+            p_color_attachments: attachments.as_ffi_ptr(),
+            p_depth_attachment: depth.as_ffi_ptr(),
             p_stencil_attachment: std::ptr::null(),
             ..Default::default()
         };
 
         d.cmd_begin_rendering_khr(cmd, &info);
+
+        let pipeline_info = self.pipeline.get_object().get_create_info();
+        if let Some(state) = &pipeline_info.dynamic_state {
+            // TODO this kinda sucks, we should probably include a bitmask of dynamic states or something
+            if state.dynamic_states.contains(&vk::DynamicState::VIEWPORT) {
+                let viewport = vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: width as f32,
+                    height: height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                };
+                d.cmd_set_viewport(cmd, 0, std::slice::from_ref(&viewport));
+            }
+
+            if state.dynamic_states.contains(&vk::DynamicState::SCISSOR) {
+                let rect = vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: vk::Extent2D { width, height },
+                };
+                d.cmd_set_scissor(cmd, 0, std::slice::from_ref(&rect));
+            }
+        }
 
         d.cmd_bind_pipeline(
             cmd,
@@ -244,31 +265,6 @@ impl RenderPass for SimpleShaderPass {
             std::mem::size_of_val(&matrices) as u32,
             matrices.as_ptr().cast(),
         );
-
-        let pipeline_info = self.pipeline.get_object().get_create_info();
-
-        if let Some(state) = &pipeline_info.dynamic_state {
-            // TODO this kinda sucks, we should probably include a bitmask of dynamic states or something
-            if state.dynamic_states.contains(&vk::DynamicState::VIEWPORT) {
-                let viewport = vk::Viewport {
-                    x: 0.0,
-                    y: 0.0,
-                    width: width as f32,
-                    height: height as f32,
-                    min_depth: 0.0,
-                    max_depth: 1.0,
-                };
-                d.cmd_set_viewport(cmd, 0, std::slice::from_ref(&viewport));
-            }
-
-            if state.dynamic_states.contains(&vk::DynamicState::SCISSOR) {
-                let rect = vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk::Extent2D { width, height },
-                };
-                d.cmd_set_scissor(cmd, 0, std::slice::from_ref(&rect));
-            }
-        }
 
         d.cmd_bind_vertex_buffers(cmd, 0, &[executor.get_buffer(self.info.vertices)], &[8]);
         d.cmd_bind_index_buffer(
