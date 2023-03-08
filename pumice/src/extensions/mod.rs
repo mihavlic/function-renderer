@@ -12,6 +12,8 @@ pub mod khr_create_renderpass2;
 pub mod khr_depth_stencil_resolve;
 pub mod khr_dynamic_rendering;
 pub mod khr_get_physical_device_properties2;
+pub mod khr_image_format_list;
+pub mod khr_imageless_framebuffer;
 pub mod khr_maintenance2;
 pub mod khr_multiview;
 pub mod khr_shader_non_semantic_info;

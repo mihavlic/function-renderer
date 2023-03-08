@@ -2294,6 +2294,22 @@ unsafe impl DeepCopy for crate::vk11::DeviceQueueInfo2 {
         (*copy).p_next = writer.write_pnext(self.p_next) as *const _;
     }
 }
+unsafe impl DeepCopy
+for crate::extensions::khr_image_format_list::ImageFormatListCreateInfoKHR {
+    fn measure(&self, measure: &mut CopyMeasure) {
+        unsafe {
+            measure.measure_pnext(self.p_next);
+            measure
+                .measure_arr_ptr(self.p_view_formats, (self.view_format_count) as usize);
+        }
+    }
+    unsafe fn copy(&self, copy: *mut Self, writer: &mut CopyWriter) {
+        (*copy).p_next = writer.write_pnext(self.p_next) as *const _;
+        (*copy)
+            .p_view_formats = writer
+            .write_arr_ptr(self.p_view_formats, (self.view_format_count) as usize);
+    }
+}
 unsafe impl DeepCopy for crate::vk11::PhysicalDeviceMaintenance3Properties {
     fn measure(&self, measure: &mut CopyMeasure) {
         unsafe {
@@ -2686,6 +2702,71 @@ for crate::extensions::ext_scalar_block_layout::PhysicalDeviceScalarBlockLayoutF
     }
     unsafe fn copy(&self, copy: *mut Self, writer: &mut CopyWriter) {
         (*copy).p_next = writer.write_pnext(self.p_next);
+    }
+}
+unsafe impl DeepCopy
+for crate::extensions::khr_imageless_framebuffer::PhysicalDeviceImagelessFramebufferFeaturesKHR {
+    fn measure(&self, measure: &mut CopyMeasure) {
+        unsafe {
+            measure.measure_pnext(self.p_next);
+        }
+    }
+    unsafe fn copy(&self, copy: *mut Self, writer: &mut CopyWriter) {
+        (*copy).p_next = writer.write_pnext(self.p_next);
+    }
+}
+unsafe impl DeepCopy
+for crate::extensions::khr_imageless_framebuffer::FramebufferAttachmentsCreateInfoKHR {
+    fn measure(&self, measure: &mut CopyMeasure) {
+        unsafe {
+            measure.measure_pnext(self.p_next);
+            measure
+                .measure_arr_ptr(
+                    self.p_attachment_image_infos,
+                    (self.attachment_image_info_count) as usize,
+                );
+        }
+    }
+    unsafe fn copy(&self, copy: *mut Self, writer: &mut CopyWriter) {
+        (*copy).p_next = writer.write_pnext(self.p_next) as *const _;
+        (*copy)
+            .p_attachment_image_infos = writer
+            .write_arr_ptr(
+                self.p_attachment_image_infos,
+                (self.attachment_image_info_count) as usize,
+            );
+    }
+}
+unsafe impl DeepCopy
+for crate::extensions::khr_imageless_framebuffer::FramebufferAttachmentImageInfoKHR {
+    fn measure(&self, measure: &mut CopyMeasure) {
+        unsafe {
+            measure.measure_pnext(self.p_next);
+            measure
+                .measure_arr_ptr(self.p_view_formats, (self.view_format_count) as usize);
+        }
+    }
+    unsafe fn copy(&self, copy: *mut Self, writer: &mut CopyWriter) {
+        (*copy).p_next = writer.write_pnext(self.p_next) as *const _;
+        (*copy)
+            .p_view_formats = writer
+            .write_arr_ptr(self.p_view_formats, (self.view_format_count) as usize);
+    }
+}
+unsafe impl DeepCopy
+for crate::extensions::khr_imageless_framebuffer::RenderPassAttachmentBeginInfoKHR {
+    fn measure(&self, measure: &mut CopyMeasure) {
+        unsafe {
+            measure.measure_pnext(self.p_next);
+            measure
+                .measure_arr_ptr(self.p_attachments, (self.attachment_count) as usize);
+        }
+    }
+    unsafe fn copy(&self, copy: *mut Self, writer: &mut CopyWriter) {
+        (*copy).p_next = writer.write_pnext(self.p_next) as *const _;
+        (*copy)
+            .p_attachments = writer
+            .write_arr_ptr(self.p_attachments, (self.attachment_count) as usize);
     }
 }
 unsafe impl DeepCopy

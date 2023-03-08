@@ -2110,6 +2110,17 @@ impl DumbHash for crate::vk11::DeviceQueueInfo2 {
         }
     }
 }
+impl DumbHash
+for crate::extensions::khr_image_format_list::ImageFormatListCreateInfoKHR {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe {
+            self.s_type.hash(state);
+            hash_pnext(self.p_next, state);
+            self.view_format_count.hash(state);
+            hash_raw_arr(self.p_view_formats, (self.view_format_count) as usize, state);
+        }
+    }
+}
 impl DumbHash for crate::vk11::PhysicalDeviceMaintenance3Properties {
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe {
@@ -2433,6 +2444,58 @@ for crate::extensions::ext_scalar_block_layout::PhysicalDeviceScalarBlockLayoutF
             self.s_type.hash(state);
             hash_pnext(self.p_next, state);
             self.scalar_block_layout.hash(state);
+        }
+    }
+}
+impl DumbHash
+for crate::extensions::khr_imageless_framebuffer::PhysicalDeviceImagelessFramebufferFeaturesKHR {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe {
+            self.s_type.hash(state);
+            hash_pnext(self.p_next, state);
+            self.imageless_framebuffer.hash(state);
+        }
+    }
+}
+impl DumbHash
+for crate::extensions::khr_imageless_framebuffer::FramebufferAttachmentsCreateInfoKHR {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe {
+            self.s_type.hash(state);
+            hash_pnext(self.p_next, state);
+            self.attachment_image_info_count.hash(state);
+            hash_raw_arr(
+                self.p_attachment_image_infos,
+                (self.attachment_image_info_count) as usize,
+                state,
+            );
+        }
+    }
+}
+impl DumbHash
+for crate::extensions::khr_imageless_framebuffer::FramebufferAttachmentImageInfoKHR {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe {
+            self.s_type.hash(state);
+            hash_pnext(self.p_next, state);
+            self.flags.hash(state);
+            self.usage.hash(state);
+            self.width.hash(state);
+            self.height.hash(state);
+            self.layer_count.hash(state);
+            self.view_format_count.hash(state);
+            hash_raw_arr(self.p_view_formats, (self.view_format_count) as usize, state);
+        }
+    }
+}
+impl DumbHash
+for crate::extensions::khr_imageless_framebuffer::RenderPassAttachmentBeginInfoKHR {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe {
+            self.s_type.hash(state);
+            hash_pnext(self.p_next, state);
+            self.attachment_count.hash(state);
+            hash_raw_arr(self.p_attachments, (self.attachment_count) as usize, state);
         }
     }
 }

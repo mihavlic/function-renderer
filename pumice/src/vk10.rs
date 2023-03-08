@@ -6513,8 +6513,12 @@ crate::enum_impl! {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct FramebufferCreateFlags(pub u32);
+impl FramebufferCreateFlags {
+    /// khr_imageless_framebuffer
+    pub const IMAGELESS_KHR: Self = Self(1 << 0);
+}
 crate::bitflags_impl! {
-    FramebufferCreateFlags : u32, 0x0,
+    FramebufferCreateFlags : u32, 0x1, IMAGELESS_KHR
 }
 #[doc(alias = "VkEventCreateFlags")]
 /// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkEventCreateFlags.html)

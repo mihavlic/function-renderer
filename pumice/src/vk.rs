@@ -29,6 +29,10 @@ pub use crate::extensions::khr_dynamic_rendering::*;
 #[doc(no_inline)]
 pub use crate::extensions::khr_get_physical_device_properties2::*;
 #[doc(no_inline)]
+pub use crate::extensions::khr_image_format_list::*;
+#[doc(no_inline)]
+pub use crate::extensions::khr_imageless_framebuffer::*;
+#[doc(no_inline)]
 pub use crate::extensions::khr_maintenance2::*;
 #[doc(no_inline)]
 pub use crate::extensions::khr_multiview::*;

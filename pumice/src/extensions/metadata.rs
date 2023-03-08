@@ -100,6 +100,21 @@ pub const EXTENSION_METADATA: &[ExtensionMetadata] = &[
         requires_extensions: &[],
     },
     ExtensionMetadata {
+        name: crate::cstr!("VK_KHR_image_format_list"),
+        instance: false,
+        core_version: crate::vk10::API_VERSION_1_0,
+        requires_extensions: &[],
+    },
+    ExtensionMetadata {
+        name: crate::cstr!("VK_KHR_imageless_framebuffer"),
+        instance: false,
+        core_version: crate::vk10::API_VERSION_1_0,
+        requires_extensions: &[
+            crate::cstr!("VK_KHR_maintenance2"),
+            crate::cstr!("VK_KHR_image_format_list"),
+        ],
+    },
+    ExtensionMetadata {
         name: crate::cstr!("VK_KHR_maintenance2"),
         instance: false,
         core_version: crate::vk10::API_VERSION_1_0,

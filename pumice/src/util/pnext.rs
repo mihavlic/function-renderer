@@ -358,6 +358,22 @@ macro_rules! pnext_visit {
         ::vk10::StructureType::VI_SURFACE_CREATE_INFO_NN => { let $object = $pnext
         .cast:: < crate ::extensions::nn_vi_surface::ViSurfaceCreateInfoNN > (); $op;
         $pnext = (* $object).p_next; } $crate
+        ::vk10::StructureType::PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES => { let
+        $object = $pnext .cast:: < crate
+        ::extensions::khr_imageless_framebuffer::PhysicalDeviceImagelessFramebufferFeaturesKHR
+        > (); $op; $pnext = (* $object).p_next; } $crate
+        ::vk10::StructureType::FRAMEBUFFER_ATTACHMENTS_CREATE_INFO => { let $object =
+        $pnext .cast:: < crate
+        ::extensions::khr_imageless_framebuffer::FramebufferAttachmentsCreateInfoKHR >
+        (); $op; $pnext = (* $object).p_next; } $crate
+        ::vk10::StructureType::FRAMEBUFFER_ATTACHMENT_IMAGE_INFO => { let $object =
+        $pnext .cast:: < crate
+        ::extensions::khr_imageless_framebuffer::FramebufferAttachmentImageInfoKHR > ();
+        $op; $pnext = (* $object).p_next; } $crate
+        ::vk10::StructureType::RENDER_PASS_ATTACHMENT_BEGIN_INFO => { let $object =
+        $pnext .cast:: < crate
+        ::extensions::khr_imageless_framebuffer::RenderPassAttachmentBeginInfoKHR > ();
+        $op; $pnext = (* $object).p_next; } $crate
         ::vk10::StructureType::ATTACHMENT_DESCRIPTION_2 => { let $object = $pnext .cast::
         < crate ::extensions::khr_create_renderpass2::AttachmentDescription2KHR > ();
         $op; $pnext = (* $object).p_next; } $crate
@@ -401,6 +417,9 @@ macro_rules! pnext_visit {
         $pnext .cast:: < crate
         ::extensions::ext_debug_utils::DebugUtilsMessengerCallbackDataEXT > (); $op;
         $pnext = (* $object).p_next; } $crate
+        ::vk10::StructureType::IMAGE_FORMAT_LIST_CREATE_INFO => { let $object = $pnext
+        .cast:: < crate ::extensions::khr_image_format_list::ImageFormatListCreateInfoKHR
+        > (); $op; $pnext = (* $object).p_next; } $crate
         ::vk10::StructureType::PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES => { let
         $object = $pnext .cast:: < crate
         ::extensions::khr_depth_stencil_resolve::PhysicalDeviceDepthStencilResolvePropertiesKHR
