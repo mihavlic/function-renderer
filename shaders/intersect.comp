@@ -1,5 +1,4 @@
 #version 450
-#extension GL_EXT_scalar_block_layout : enable
 #extension GL_GOOGLE_include_directive : enable
 
 layout(local_size_x = 4 * 3, local_size_y = 4, local_size_z = 4) in;
@@ -35,13 +34,13 @@ void main() {
     float p1 = imageLoad(function_values, ivec3(pos)).x;
     float p2 = imageLoad(function_values, ivec3(pos2)).x;
 
-    const float infinity = 1.0 / 0.0;
+    // const float infinity = 1.0 / 0.0;
 
-    // infinity plays kind of poorly with our zero crossing detection
-    // we get better results when rejecting it
-    if (abs(p1) == infinity || abs(p2) == infinity) {
-        return;
-    }
+    // // infinity plays kind of poorly with our zero crossing detection
+    // // we get better results when rejecting it
+    // if (abs(p1) == infinity || abs(p2) == infinity) {
+    //     return;
+    // }
 
     // early exit if the sign is the same
     if ((p1 >= 0.0) == (p2 >= 0.0)) {

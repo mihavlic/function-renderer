@@ -6,7 +6,7 @@ use std::error::Error;
 use std::fmt::{format, Display};
 use std::fs::File;
 use std::hash::Hash;
-use std::io::{Cursor, Seek};
+use std::io::{Cursor, Seek, Write};
 use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -16,6 +16,7 @@ use std::thread::JoinHandle;
 use std::{io, slice};
 
 use crate::write::{make_density_function, math_into_glsl, GlslCompiler};
+use graph::device::debug::LazyDisplay;
 use graph::device::reflection::ReflectedLayout;
 use graph::device::{self, read_spirv, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::GraphCompiler;
@@ -118,6 +119,7 @@ impl ShaderModules {
             rl.load_history(&path);
 
             if let Some(last) = rl.history().last() {
+                println!("Displaying last function\n  {last}");
                 sender.send(AsyncEvent::StdinLine(last.to_owned()));
             }
 
@@ -131,7 +133,6 @@ impl ShaderModules {
             // since this thread otherwise blocks on stdin the rest of the time and the main thread ending will terminate it immediatelly
             let size = history_file.seek(io::SeekFrom::End(0)).unwrap();
             if size == 0 {
-                // version header or something
                 writeln!(history_file, "#V2").unwrap();
             }
 
@@ -224,10 +225,6 @@ impl ShaderModules {
             }
         }
 
-        if self.density_function.is_none() && new_density_function.is_empty() {
-            return PollResult::Skip;
-        }
-
         let mut status = PollResult::Ok;
         if !new_density_function.is_empty() {
             match math_into_glsl(&new_density_function) {
@@ -236,9 +233,31 @@ impl ShaderModules {
                     status = PollResult::Recreate;
                 }
                 Err(e) => {
-                    eprintln!("Error parsing expression {:?}", e)
+                    let text = LazyDisplay(|f| writeln!(f, "\r{}", e));
+                    let error = graph::util::debug_callback::Colored(
+                        graph::tracing::Severity::Error,
+                        &text,
+                    );
+                    {
+                        let mut stdout = std::io::stdout().lock();
+                        write!(stdout, "{error}");
+                        if self.stdin.is_some() {
+                            print!("❯ ");
+                            stdout.flush();
+                        }
+                    }
+                    // if an error occured while parsing the first ever expression, we replace it with a dummy "0.0"
+                    // so that the graph is run even without producing any triangles
+                    // for example gnome/wayland does not display a window until a swapchain is acquired for the first time
+                    if self.density_function.is_none() {
+                        self.density_fn_changed(math_into_glsl(&"0.0").unwrap());
+                    }
                 }
             }
+        }
+
+        if self.density_function.is_none() {
+            return PollResult::Skip;
         }
 
         if !files.is_empty() {
@@ -247,8 +266,6 @@ impl ShaderModules {
             files.dedup();
 
             self.remove_dirty_files(&files);
-
-            // eprintln!("Recompiling files: {:?}", files);
         }
 
         status

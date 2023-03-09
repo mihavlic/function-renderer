@@ -112,15 +112,15 @@ pub fn write_glsl(node: &Expression) -> String {
     out
 }
 
-pub fn make_glsl_math(raw_math: &str) -> String {
-    let mut parser = Parser::new(raw_math);
-    let root = parse_expr(&mut parser, u8::MAX);
+pub fn make_glsl_math(raw_math: &str) -> parser::Result<String> {
+    let mut parser = Parser::new(raw_math)?;
+    let root = parse_expr(&mut parser, u8::MAX)?;
 
     // eprint!("Debug ast of {}:  ", raw_math.trim());
     // debug_ast(&root);
     // eprintln!();
 
-    write_glsl(&root)
+    Ok(write_glsl(&root))
 }
 
 #[rustfmt::skip]
@@ -141,7 +141,7 @@ pub fn make_density_function(expr: &str) -> String {
         y <= 0.5 || y >= 61.5 ||
         z <= 0.5 || z >= 61.5
     ) {{
-        return 0.1;
+        return -0.1;
     }} else {{
         return {expr};
     }}
@@ -153,8 +153,8 @@ pub struct GlslCompiler {
     options: shaderc::CompileOptions<'static>,
 }
 
-pub fn math_into_glsl(math: &str) -> std::thread::Result<String> {
-    let glsl_math = std::panic::catch_unwind(|| make_glsl_math(&math))?;
+pub fn math_into_glsl(math: &str) -> parser::Result<String> {
+    let glsl_math = make_glsl_math(&math)?;
     Ok(make_density_function(&glsl_math))
 }
 

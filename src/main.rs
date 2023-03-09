@@ -9,64 +9,39 @@ pub mod recomputation;
 mod write;
 mod yawpitch;
 
-use std::cell::RefCell;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::env::current_dir;
-use std::error::Error;
-use std::f32::consts::FRAC_PI_2;
-use std::fmt::Display;
-use std::fs::File;
-use std::hash::Hash;
-use std::io::Cursor;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
-use std::{io, slice};
-
-use arcball::ArcballCamera;
 use dolly::prelude::{Arm, Position, RightHanded, Smooth};
 use dolly::rig::CameraRig;
 use dolly::transform::Transform;
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 use graph::device::reflection::{ReflectedLayout, SpirvModule};
-use graph::device::{self, read_spirv, Device, DeviceCreateInfo, QueueFamilySelection};
+use graph::device::{self, Device, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::GraphCompiler;
 use graph::graph::descriptors::{DescBuffer, DescImage, DescSetBuilder, DescriptorData};
 use graph::graph::execute::{CompiledGraph, GraphExecutor, GraphRunConfig, GraphRunStatus};
-use graph::graph::record::GraphPassBuilder;
-use graph::instance::{Instance, InstanceCreateInfo, OwnedInstance};
-use graph::object::{self, ImageCreateInfo, PipelineStage, SwapchainCreateInfo};
-use graph::passes::{self, ClearImage, SimpleShader};
+use graph::instance::{Instance, InstanceCreateInfo};
+use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
-use graph::vma::{self};
+use graph::vma;
 use hotreaload::{PollResult, ShaderModules, ShaderModulesConfig};
-use mesh_pass::ArcBallAngles;
-use notify::event::{DataChange, ModifyKind};
-use notify::Watcher;
 use pass::LambdaPass;
-use pumice::util::ObjectHandle;
-use pumice::VulkanResult;
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
-use winit::event::{
-    DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
-};
+use std::cell::RefCell;
+use std::error::Error;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use winit::event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
-
-use crate::write::make_glsl_math;
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
 
 fn main() {
     unsafe {
         install_tracing_subscriber(None);
-        let mut event_loop = EventLoop::new();
+        let event_loop = EventLoop::new();
 
         let window = WindowBuilder::new()
             .with_inner_size(winit::dpi::LogicalSize::new(512.0f32, 512.0f32))
@@ -76,19 +51,19 @@ fn main() {
         let (surface, device, queue) = make_device(&window);
         let swapchain = make_swapchain(&window, surface, &device);
 
-        let mut modules = ShaderModules::new(
-            // ShaderModulesConfig::WatchStdin,
+        let modules = ShaderModules::new(
+            ShaderModulesConfig::WatchStdin,
             // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
-            ShaderModulesConfig::Static("30 - z"),
+            // ShaderModulesConfig::Static("30 - z"),
         );
-        let mut cache = RecomputationCache::new();
+        let cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
 
         let mut camera: CameraRig = CameraRig::builder()
             .with(Position::new(Vec3::splat(32.0)))
             .with(YawPitchZUp::new().pitch_degrees(25.0).yaw_degrees(90.0))
             .with(Smooth::new_rotation(0.25))
-            .with(Arm::new(Vec3::Z * 64.0))
+            .with(Arm::new(Vec3::Z * 120.0))
             .build();
 
         let transform: Arc<Mutex<Transform<RightHanded>>> =
@@ -114,10 +89,11 @@ fn main() {
             match event {
                 Event::DeviceEvent { device_id, event } => match event {
                     DeviceEvent::MouseMotion { delta: (x, y) } => {
+                        let m = 0.3;
                         if mouse_left_pressed {
                             camera
                                 .driver_mut::<YawPitchZUp>()
-                                .rotate_yaw_pitch(x as f32, y as f32);
+                                .rotate_yaw_pitch(x as f32 * m, y as f32 * m);
                         }
                     }
                     _ => {}
@@ -158,7 +134,7 @@ fn main() {
                 Event::MainEventsCleared => {
                     window.request_redraw();
                 }
-                Event::RedrawRequested(req) => {
+                Event::RedrawRequested(_) => {
                     control_flow.set_poll();
 
                     let dt = prev.elapsed().as_secs_f32();
@@ -188,19 +164,24 @@ fn main() {
                             let result = graph.run(GraphRunConfig {
                                 swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
                                 acquire_swapchain_with_fence: false,
+                                // we need to recreate some images if the swapchain size changed
                                 return_after_swapchain_recreate: true,
                             });
 
                             match result {
                                 GraphRunStatus::Ok => {}
                                 GraphRunStatus::SwapchainAcquireTimeout => {}
-                                GraphRunStatus::SwapchainRecreated => rebuild_graph = true,
+                                GraphRunStatus::SwapchainRecreated => {
+                                    rebuild_graph = true;
+                                }
                             }
 
                             if let Some(remaining) =
                                 Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
                             {
-                                std::thread::sleep(remaining);
+                                if !rebuild_graph {
+                                    std::thread::sleep(remaining);
+                                }
                             }
                         }
                     }
@@ -269,7 +250,7 @@ unsafe fn make_graph(
 
     let common = modules.retrieve_simple("shaders/common.h");
 
-    let mut cache = RefCell::new(cache);
+    let cache = RefCell::new(cache);
 
     let mut create_pipeline = |path: &str, needs_eval_fn: bool| -> Result<_, Box<dyn Error>> {
         let mut cache = cache.borrow_mut();
@@ -411,7 +392,7 @@ unsafe fn make_graph(
     let vert_module = modules.retrieve("shaders/mesh.vert", device)?;
     let frag_module = modules.retrieve("shaders/mesh.frag", device)?;
 
-    let (pipeline, pipeline_layout) = cache
+    let pipeline = cache
         .borrow_mut()
         .compute_located(args!(), args!(vert_module, frag_module), || {
             let layout = ReflectedLayout::new(&[
@@ -505,13 +486,10 @@ unsafe fn make_graph(
                     ..Default::default()
                 })
                 .dynamic_state([vk::DynamicState::SCISSOR, vk::DynamicState::VIEWPORT])
-                .layout(layout.clone())
+                .layout(layout)
                 .finish();
 
-            (
-                device.create_delayed_graphics_pipeline(pipeline_info),
-                layout,
-            )
+            device.create_delayed_graphics_pipeline(pipeline_info)
         })
         .into_inner();
 
@@ -946,7 +924,7 @@ unsafe fn make_graph(
             (vec![color], vec![swapchain_image])
         };
 
-        let draw = b.add_pass(
+        b.add_pass(
             queue,
             mesh_pass::SimpleShader {
                 pipeline,
@@ -1073,7 +1051,7 @@ unsafe fn make_device(
     let info = InstanceCreateInfo {
         config: &mut conf,
         validation_layers: &[
-            pumice::cstr!("VK_LAYER_KHRONOS_validation"),
+            // pumice::cstr!("VK_LAYER_KHRONOS_validation"),
             // pumice::cstr!("VK_LAYER_LUNARG_api_dump"),
         ],
         enable_debug_callback: true,

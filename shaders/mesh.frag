@@ -1,5 +1,4 @@
 #version 450
-#extension GL_ARB_separate_shader_objects : enable
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inViewPos;
@@ -26,7 +25,8 @@ void main() {
     float a = dot(view_normal, vec3(0.0, 0.0, 1.0));
 
 #if 1
-    vec3 color = mix(vec3(1.0), world_normal, 0.6);
+    // for some reson the normals are wrongly swizzled?
+    vec3 color = mix(vec3(1.0), world_normal.yxz, 0.6);
     color = mix(vec3(0.0), color, min(a + 0.5, 1.0));
 #else
     // color mixing code stolen from https://github.com/fstl-app/fstl/blob/master/gl/mesh.frag
