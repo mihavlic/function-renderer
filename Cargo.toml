@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [package]
 name = "function-renderer"
 version = "0.1.0"
@@ -17,8 +19,29 @@ pumice-vma = {git = "https://github.com/mihavlic/pumice-vma.git", features = ["V
 graph = {git = "https://github.com/mihavlic/vulkan-engine.git"}
 winit = {version = "0.28.1", default-features = false, features = ["wayland", "x11"]}
 notify = "5.1.0"
-rustyline = "10.1.0"
-glam = "0.22.0"
+rustyline = "10.0.0"
+glam = "0.23.0"
 dolly = "0.4.0"
 ahash = "0.8.3"
 shaderc = "0.8.2"
+
+[profile.dev.package."pumice"]
+opt-level = 2
+[profile.dev.package."pumice-vma"]
+opt-level = 2
+# [profile.dev.package."graph"]
+# opt-level = 2
+[profile.dev.package."winit"]
+opt-level = 2
+[profile.dev.package."notify"]
+opt-level = 2
+[profile.dev.package."rustyline"]
+opt-level = 2
+[profile.dev.package."glam"]
+opt-level = 2
+[profile.dev.package."dolly"]
+opt-level = 2
+[profile.dev.package."ahash"]
+opt-level = 2
+[profile.dev.package."shaderc"]
+opt-level = 2
