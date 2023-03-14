@@ -409,7 +409,7 @@ impl Renderer {
             })
             .get_handle()
     }
-    // unsafe fn create_image([width, height]: [u32; 2], device: &Device) -> TextureImage {}
+
     unsafe fn update_textures(
         &mut self,
         delta: &TexturesDelta,
@@ -827,8 +827,8 @@ impl Renderer {
                     "Attempt to draw mesh with invalid TextureID: {:?}",
                     mesh.texture_id
                 );
-                // we continue with drawing with the previous texture perhaps the obviously wrong
-                // output will make developers fix stuff quicker
+                // we continue drawing with the previous texture, perhaps the obviously wrong output
+                // will make developers fix stuff quicker
             };
 
             let v_end = vertex_buffer_ptr.add(mesh.vertices.len());
