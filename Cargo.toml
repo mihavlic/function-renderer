@@ -17,7 +17,13 @@ graph = { path = "../vulkan-engine" }
 pumice = {git = "https://github.com/mihavlic/vulkan-bindings.git", features = ["wrappers"]}
 pumice-vma = {git = "https://github.com/mihavlic/pumice-vma.git", features = ["VK_VERSION_1_1"]}
 graph = {git = "https://github.com/mihavlic/vulkan-engine.git"}
+
 winit = {version = "0.28.1", default-features = false, features = ["wayland", "x11"]}
+egui = "0.20.1"
+egui-winit = "0.20.1"
+slice-group-by = "0.3.0"
+image = "0.24.4"
+
 notify = "5.1.0"
 rustyline = "10.0.0"
 glam = "0.23.0"

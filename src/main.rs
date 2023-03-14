@@ -1,11 +1,12 @@
 #![allow(unused)]
 
 mod arcball;
+mod gui;
 mod hotreaload;
 mod mesh_pass;
 mod parser;
 mod pass;
-pub mod recomputation;
+mod recomputation;
 mod write;
 mod yawpitch;
 
@@ -1015,6 +1016,7 @@ unsafe fn make_device(
             coalesce: true,
             support_surfaces: &[&surface],
         }],
+        staging_transfer_queue: (0, 0),
         device_substrings: &["NVIDIA"],
         verbose: false,
         p_next: (&dynamic) as *const _ as *const _,
