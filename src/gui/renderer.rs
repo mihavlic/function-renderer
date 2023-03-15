@@ -1,7 +1,10 @@
 use super::util::EguiDescriptorSetAllocator;
 use egui::{Color32, TextureId, TexturesDelta};
 use graph::{
-    device::{batch::GenerationId, staging::ImageWrite, submission::QueueSubmission, Device},
+    device::{
+        batch::GenerationId, maybe_attach_debug_label, staging::ImageWrite,
+        submission::QueueSubmission, Device,
+    },
     object::{self},
     smallvec::smallvec,
     storage::DefaultAhashRandomstate,
@@ -262,14 +265,14 @@ impl Renderer {
                             offset: 0,
                         },
                         object::state::InputAttribute {
-                            location: 0,
-                            binding: 1,
+                            location: 1,
+                            binding: 0,
                             format: vk::Format::R32G32_SFLOAT,
                             offset: 8,
                         },
                         object::state::InputAttribute {
-                            location: 0,
-                            binding: 2,
+                            location: 2,
+                            binding: 0,
                             format: vk::Format::R8G8B8A8_UNORM,
                             offset: 16,
                         },
@@ -292,12 +295,16 @@ impl Renderer {
                 })
                 .depth_stencil(object::state::DepthStencil::default())
                 .color_blend(object::state::ColorBlend {
-                    attachments: vec![object::state::Attachment {
-                        color_write_mask: vk::ColorComponentFlags::all(),
+                    attachments: [object::state::Attachment {
+                        blend_enable: vk::TRUE,
+                        color_write_mask: vk::ColorComponentFlags::R
+                            | vk::ColorComponentFlags::G
+                            | vk::ColorComponentFlags::B,
                         src_color_blend_factor: vk::BlendFactor::ONE,
                         dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
                         ..Default::default()
-                    }],
+                    }]
+                    .to_vec(),
                     ..Default::default()
                 })
                 .dynamic_state([vk::DynamicState::SCISSOR, vk::DynamicState::VIEWPORT])
@@ -314,12 +321,14 @@ impl Renderer {
         let vertex_buffer = Self::create_buffer(
             VERTEX_BUFFER_BYTES,
             vk::BufferUsageFlags::VERTEX_BUFFER,
+            "Egui vertex buffer",
             device,
         );
 
         let index_buffer = Self::create_buffer(
             INDEX_BUFFER_BYTES,
             vk::BufferUsageFlags::INDEX_BUFFER,
+            "Egui index buffer",
             device,
         );
 
@@ -349,6 +358,7 @@ impl Renderer {
     unsafe fn create_buffer<T>(
         size: u64,
         usage: vk::BufferUsageFlags,
+        label: &'static str,
         device: &Device,
     ) -> (object::Buffer, *mut T) {
         let buffer = device
@@ -358,7 +368,7 @@ impl Renderer {
                     size,
                     usage,
                     sharing_mode_concurrent: false,
-                    label: None,
+                    label: Some(label.into()),
                 },
                 vma::AllocationCreateInfo {
                     flags: vma::AllocationCreateFlags::MAPPED
@@ -527,7 +537,8 @@ impl Renderer {
                                 mip_levels: 1,
                                 array_layers: 1,
                                 tiling: vk::ImageTiling::OPTIMAL,
-                                usage: vk::ImageUsageFlags::SAMPLED,
+                                usage: vk::ImageUsageFlags::SAMPLED
+                                    | vk::ImageUsageFlags::TRANSFER_DST,
                                 sharing_mode_concurrent: false,
                                 initial_layout: vk::ImageLayout::UNDEFINED,
                                 label: Some(format!("egui tex {character}#{index}").into()),
@@ -608,7 +619,7 @@ impl Renderer {
                         },
                         image_extent: vk::Extent3D {
                             width: b.extent[0],
-                            height: b.extent[0],
+                            height: b.extent[1],
                             depth: 1,
                         },
                     })
@@ -616,6 +627,7 @@ impl Renderer {
 
                 staging.write_image(
                     &image.image,
+                    Some(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
                     std::alloc::Layout::new::<Color32>(),
                     regions,
                     move |ptr, i, _| {
@@ -649,7 +661,7 @@ impl Renderer {
         clear: Option<vk::ClearColorValue>,
         pixels_per_point: f32,
 
-        clipped_meshes: &[egui::ClippedPrimitive],
+        primitives: &[egui::ClippedPrimitive],
         textures_delta: &TexturesDelta,
         [width, height]: [u32; 2],
 
@@ -800,7 +812,7 @@ impl Renderer {
         for egui::ClippedPrimitive {
             clip_rect,
             primitive,
-        } in clipped_meshes
+        } in primitives
         {
             let egui::epaint::Primitive::Mesh(mesh) = primitive else {
                 panic!("Callback primitive is Unsupported");
@@ -832,11 +844,14 @@ impl Renderer {
             };
 
             let v_end = vertex_buffer_ptr.add(mesh.vertices.len());
-            let i_end = index_buffer_ptr.add(mesh.vertices.len());
+            let i_end = index_buffer_ptr.add(mesh.indices.len());
 
             if v_end > vertex_buffer_ptr_end || i_end > index_buffer_ptr_end {
                 panic!("Ran out of memory for mesh buffers");
             }
+
+            let size = mesh.indices.len();
+            let ptr = mesh.indices.as_ptr() as usize;
 
             vertex_buffer_ptr.copy_from_nonoverlapping(mesh.vertices.as_ptr(), mesh.vertices.len());
             index_buffer_ptr.copy_from_nonoverlapping(mesh.indices.as_ptr(), mesh.indices.len());
@@ -868,8 +883,8 @@ impl Renderer {
                         y: clip_min_y,
                     },
                     extent: vk::Extent2D {
-                        width: (clip_min_x - clip_max_x) as u32,
-                        height: (clip_min_y - clip_max_y) as u32,
+                        width: (clip_max_x - clip_min_x).max(0) as u32,
+                        height: (clip_max_y - clip_min_y).max(0) as u32,
                     },
                 }],
             );
@@ -885,8 +900,8 @@ impl Renderer {
             vertex_buffer_ptr = v_end;
             index_buffer_ptr = i_end;
 
-            vertex_offset += mesh.vertices.len() as i32;
             index_offset += mesh.indices.len() as u32;
+            vertex_offset += mesh.vertices.len() as i32;
         }
 
         d.cmd_end_render_pass(command_buffer);

@@ -14,7 +14,7 @@ use graph::{
 };
 use pumice::{util::ObjectHandle, vk};
 
-use crate::arcball::ArcballCamera;
+use crate::{arcball::ArcballCamera, FrameData};
 
 pub struct SimpleShader {
     pub pipeline: GraphicsPipeline,
@@ -24,7 +24,7 @@ pub struct SimpleShader {
     pub vertices: GraphBuffer,
     pub indices: GraphBuffer,
     pub draw_parameter_buffer: GraphBuffer,
-    pub transform: Arc<Mutex<Transform<RightHanded>>>,
+    pub transform: Arc<Mutex<FrameData>>,
 }
 
 impl CreatePass for SimpleShader {
@@ -249,7 +249,7 @@ impl RenderPass for SimpleShaderPass {
             512.0,
         );
         let world_to_view = {
-            let transform = self.info.transform.lock().unwrap();
+            let transform = self.info.transform.lock().unwrap().camera;
             let ro = Mat4::from_quat(transform.rotation.conjugate());
             let tr = Mat4::from_translation(-transform.position);
             ro * tr

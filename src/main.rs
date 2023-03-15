@@ -13,31 +13,55 @@ mod yawpitch;
 use dolly::prelude::{Arm, Position, RightHanded, Smooth};
 use dolly::rig::CameraRig;
 use dolly::transform::Transform;
+use egui::{Align, Color32, Layout};
+use egui_winit::winit::event_loop::EventLoopWindowTarget;
 use glam::Vec3;
 use graph::device::reflection::{ReflectedLayout, SpirvModule};
 use graph::device::{self, Device, DeviceCreateInfo, QueueFamilySelection};
-use graph::graph::compile::GraphCompiler;
+use graph::graph::compile::{GraphCompiler, ImageKindCreateInfo};
 use graph::graph::descriptors::{DescBuffer, DescImage, DescSetBuilder, DescriptorData};
 use graph::graph::execute::{CompiledGraph, GraphExecutor, GraphRunConfig, GraphRunStatus};
+use graph::graph::task::{UnsafeSend, UnsafeSendSync};
 use graph::instance::{Instance, InstanceCreateInfo};
 use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
-use hotreaload::{PollResult, ShaderModules, ShaderModulesConfig};
+use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
 use pass::LambdaPass;
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
 use std::cell::RefCell;
 use std::error::Error;
+use std::ops::Deref;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
+use write::math_into_glsl;
 use yawpitch::YawPitchZUp;
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
+
+pub struct FrameData {
+    camera: Transform<RightHanded>,
+    primitives: Vec<egui::ClippedPrimitive>,
+    textures_delta: egui::TexturesDelta,
+    pixels_per_point: f32,
+}
+
+impl Default for FrameData {
+    fn default() -> Self {
+        Self {
+            camera: Transform::IDENTITY,
+            primitives: Default::default(),
+            textures_delta: Default::default(),
+            pixels_per_point: 1.0,
+        }
+    }
+}
 
 fn main() {
     unsafe {
@@ -53,8 +77,9 @@ fn main() {
         let swapchain = make_swapchain(&window, surface, &device);
 
         let modules = ShaderModules::new(
-            ShaderModulesConfig::WatchStdin,
+            // ShaderModulesConfig::WatchStdin,
             // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
+            ShaderModulesConfig::Static("sin(2sqrt(x*x+y*y+z*z)/pi)"),
             // ShaderModulesConfig::Static("30 - z"),
         );
         let cache = RecomputationCache::new();
@@ -67,8 +92,7 @@ fn main() {
             .with(Arm::new(Vec3::Z * 120.0))
             .build();
 
-        let transform: Arc<Mutex<Transform<RightHanded>>> =
-            Arc::new(Mutex::new(Transform::IDENTITY));
+        let transform: Arc<Mutex<FrameData>> = Arc::new(Mutex::new(FrameData::default()));
 
         let mut prev = std::time::Instant::now();
         let mut mouse_left_pressed = false;
@@ -76,12 +100,37 @@ fn main() {
 
         let mut graph: Option<CompiledGraph> = None;
 
+        let context = egui::Context::default();
+        let mut winit = egui_winit::State::new(&event_loop);
+        winit.set_max_texture_side(8192);
+        winit.set_pixels_per_point(window.scale_factor() as f32);
+
+        let mut gui = GuiControl::new(
+            modules.event_sender(),
+            &[
+                "log(x*0.0001)/log(y/32) + 15 - z",
+                "64/sqrt((x-32)(x-32) + (y-32)(y-32)) - z + 15",
+                "16*sin(sqrt((x-32)(x-32) + (y-32)(y-32)) / 2pi) - z + 32",
+                "|x-32| + |y-32| - z",
+                "sin(2sqrt(x*x+y*y+z*z)/pi)",
+                "2000/((x-32)(y-32)) - z + 15",
+                "32/(y-32) - (z-32)",
+            ],
+        );
+
         let mut device_option = Some(device);
         let mut swapchain_option = Some(swapchain);
         let mut modules_option = Some(modules);
         let mut cache_option = Some(cache);
 
         event_loop.run(move |event, _, control_flow| {
+            if let Event::WindowEvent { window_id, event } = &event {
+                let response = winit.on_event(&context, &event);
+                if response.consumed {
+                    return;
+                }
+            }
+
             let mut device = device_option.as_mut().unwrap();
             let mut swapchain = swapchain_option.as_mut().unwrap();
             let mut modules = modules_option.as_mut().unwrap();
@@ -139,9 +188,7 @@ fn main() {
                     control_flow.set_poll();
 
                     let dt = prev.elapsed().as_secs_f32();
-                    {
-                        *transform.lock().unwrap() = camera.update(dt);
-                    }
+                    camera.update(dt);
 
                     prev = std::time::Instant::now();
 
@@ -162,6 +209,19 @@ fn main() {
                             || size.width == 0
                             || size.height == 0)
                         {
+                            let new_input = winit.take_egui_input(&window);
+                            context.begin_frame(new_input);
+                            gui.ui(&context);
+                            let output = context.end_frame();
+                            let clipped_meshes = context.tessellate(output.shapes);
+
+                            {
+                                let mut lock = transform.lock().unwrap();
+                                lock.camera = camera.final_transform;
+                                lock.primitives = clipped_meshes;
+                                lock.textures_delta.append(output.textures_delta);
+                            }
+
                             let result = graph.run(GraphRunConfig {
                                 swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
                                 acquire_swapchain_with_fence: false,
@@ -229,10 +289,87 @@ fn main() {
     }
 }
 
+struct GuiControl {
+    edit: String,
+    sender: Sender<AsyncEvent>,
+    error: Option<String>,
+    history: Vec<String>,
+    history_index: usize,
+}
+
+impl GuiControl {
+    fn new(sender: Sender<AsyncEvent>, initial_history: &[&str]) -> Self {
+        Self {
+            edit: initial_history.last().copied().unwrap_or("").to_owned(),
+            sender,
+            error: None,
+            history: initial_history
+                .iter()
+                .copied()
+                .map(ToOwned::to_owned)
+                .collect(),
+            history_index: initial_history.len() - 1,
+        }
+    }
+    fn ui(&mut self, ctx: &egui::Context) {
+        egui::Window::new("")
+            .id(egui::Id::new("Control"))
+            .fixed_pos((8.0, 8.0))
+            .fixed_size((180.0, 0.0))
+            .title_bar(false)
+            .show(ctx, |ui| {
+                let mut new_index = None;
+                ui.horizontal(|ui| {
+                    if ui.text_edit_singleline(&mut self.edit).lost_focus() {
+                        match math_into_glsl(&self.edit) {
+                            Ok(ok) => {
+                                self.history_index = self.history.len();
+                                self.history.push(ok.clone());
+
+                                self.sender.send(AsyncEvent::NewFunction(ok));
+                                self.error = None;
+                            }
+                            Err(e) => {
+                                self.error = Some(e.to_string());
+                            }
+                        }
+                    }
+                    if ui.button("Prev").clicked() {
+                        new_index = self.history_index.checked_sub(1);
+                    }
+                    if ui.button("Next").clicked() {
+                        new_index = self.history_index.checked_add(1);
+                    }
+                });
+
+                if let Some(new) = new_index {
+                    if let Some(f) = self.history.get(new) {
+                        self.edit = f.clone();
+                        self.history_index = new;
+
+                        match math_into_glsl(&self.edit) {
+                            Ok(ok) => {
+                                self.sender.send(AsyncEvent::NewFunction(ok));
+                                self.error = None;
+                            }
+                            Err(e) => {
+                                self.error = Some(e.to_string());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(e) = self.error.as_ref() {
+                    ui.colored_label(Color32::RED, e);
+                }
+            });
+    }
+}
+
 unsafe fn make_graph(
     swapchain: &object::Swapchain,
     queue: device::submission::Queue,
-    state: Arc<Mutex<Transform<RightHanded>>>,
+    state: Arc<Mutex<FrameData>>,
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
     cache: &mut RecomputationCache,
@@ -491,6 +628,33 @@ unsafe fn make_graph(
                 .finish();
 
             device.create_delayed_graphics_pipeline(pipeline_info)
+        })
+        .into_inner();
+
+    let egui_pass = cache
+        .borrow_mut()
+        .compute_located(args!(), args!(), || {
+            Arc::new(Mutex::new(UnsafeSendSync::new(
+                gui::Renderer::new_with_render_pass(
+                    true,
+                    vk::Format::B8G8R8A8_UNORM,
+                    MSAA_SAMPLE_COUNT,
+                    vk::AttachmentLoadOp::LOAD,
+                    vk::AttachmentStoreOp::STORE,
+                    vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                    vk::PipelineStageFlags::empty(),
+                    vk::AccessFlags::empty(),
+                    vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    device,
+                ),
+            )))
         })
         .into_inner();
 
@@ -939,6 +1103,56 @@ unsafe fn make_graph(
             },
             "Draw triangles",
         );
+
+        b.add_pass(
+            queue,
+            LambdaPass(
+                move |builder| {
+                    builder.use_image(
+                        swapchain_image,
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                        vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
+                        vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
+                        vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                        None,
+                    );
+                },
+                move |e, d| {
+                    let color_view = e.get_default_image_view(swapchain_image);
+                    let (color_usage, color_format) = match e.get_image_create_info(swapchain_image)
+                    {
+                        ImageKindCreateInfo::ImageRef(i) => (i.usage, i.format),
+                        ImageKindCreateInfo::Image(i) => (i.usage, i.format),
+                        ImageKindCreateInfo::Swapchain(i) => (i.usage, i.format),
+                    };
+                    let (width, height) = e.get_image_extent(swapchain_image).get_2d().unwrap();
+
+                    let mut data = state.lock().unwrap();
+
+                    egui_pass.lock().unwrap().paint(
+                        e.command_buffer(),
+                        color_view,
+                        vk::ImageCreateFlags::empty(),
+                        color_usage,
+                        &[color_format],
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        None,
+                        data.pixels_per_point,
+                        &data.primitives,
+                        &data.textures_delta,
+                        [width, height],
+                        d,
+                    );
+
+                    data.primitives.clear();
+                    data.textures_delta.clear();
+                },
+            ),
+            "Draw egui",
+        );
     });
 
     Ok(graph)
@@ -962,6 +1176,7 @@ unsafe fn make_device(
     conf.add_extension(vk::EXT_SHADER_SUBGROUP_BALLOT_EXTENSION_NAME);
     conf.add_extension(vk::KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
     conf.add_extension(vk::EXT_DEBUG_UTILS_EXTENSION_NAME);
+    conf.add_extension(vk::KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME);
 
     conf.fill_in_extensions().unwrap();
 
@@ -995,9 +1210,14 @@ unsafe fn make_device(
         p_next: (&mut sync) as *mut _ as *mut _,
         ..Default::default()
     };
-    let dynamic = vk::PhysicalDeviceDynamicRenderingFeaturesKHR {
+    let mut dynamic = vk::PhysicalDeviceDynamicRenderingFeaturesKHR {
         dynamic_rendering: vk::TRUE,
         p_next: (&mut timeline) as *mut _ as *mut _,
+        ..Default::default()
+    };
+    let mut imageless = vk::PhysicalDeviceImagelessFramebufferFeaturesKHR {
+        imageless_framebuffer: vk::TRUE,
+        p_next: (&mut dynamic) as *mut _ as *mut _,
         ..Default::default()
     };
 
@@ -1019,7 +1239,7 @@ unsafe fn make_device(
         staging_transfer_queue: (0, 0),
         device_substrings: &["NVIDIA"],
         verbose: false,
-        p_next: (&dynamic) as *const _ as *const _,
+        p_next: (&imageless) as *const _ as *const _,
     };
 
     let device = device::Device::new(info);

@@ -78,6 +78,7 @@ pub struct ShaderModules {
     modules: HashMap<PathBuf, MetaModuleEntry>,
     simple_files: HashMap<PathBuf, SimpleFileEntry>,
     watcher: notify::RecommendedWatcher,
+    sender: Sender<AsyncEvent>,
     receiver: Receiver<AsyncEvent>,
     stdin: Option<JoinHandle<()>>,
     compiler: GlslCompiler,
@@ -108,6 +109,7 @@ impl ShaderModules {
         )
         .unwrap();
 
+        let mut sender_copy = sender.clone();
         let stdin_watcher = move || {
             use std::io::Write;
 
@@ -120,7 +122,7 @@ impl ShaderModules {
 
             if let Some(last) = rl.history().last() {
                 println!("Displaying last function\n  {last}");
-                sender.send(AsyncEvent::StdinLine(last.to_owned()));
+                sender_copy.send(AsyncEvent::NewFunction(last.to_owned()));
             }
 
             let mut history_file = File::options()
@@ -144,13 +146,28 @@ impl ShaderModules {
                         // append and entry to the history
                         writeln!(history_file, "{line}").unwrap();
 
-                        match sender.send(AsyncEvent::StdinLine(line)) {
-                            Ok(_) => {}
-                            Err(_) => break,
+                        match math_into_glsl(&line) {
+                            Ok(ok) => {
+                                // send the valid function to be used for graphing
+                                // if the main thread exit, we'll exit too
+                                match sender_copy.send(AsyncEvent::NewFunction(ok)) {
+                                    Ok(_) => {}
+                                    Err(_) => break,
+                                }
+                            }
+                            Err(e) => {
+                                let error = graph::util::debug_callback::Colored(
+                                    graph::tracing::Severity::Error,
+                                    &e,
+                                );
+                                let mut stdout = std::io::stdout().lock();
+                                write!(stdout, "\r{error}\n❯ ");
+                                stdout.flush();
+                            }
                         }
                     }
                     Err(_) => {
-                        sender.send(AsyncEvent::Exit);
+                        sender_copy.send(AsyncEvent::Exit);
                         break;
                     }
                 }
@@ -163,6 +180,7 @@ impl ShaderModules {
             simple_files: Default::default(),
             watcher,
             receiver,
+            sender,
             stdin: None,
             compiler: GlslCompiler::new(),
         };
@@ -182,6 +200,9 @@ impl ShaderModules {
         };
 
         s
+    }
+    pub fn event_sender(&self) -> Sender<AsyncEvent> {
+        self.sender.clone()
     }
     fn density_fn_changed(&mut self, new: String) {
         self.density_function = Some(new);
@@ -215,7 +236,7 @@ impl ShaderModules {
             match self.receiver.try_recv() {
                 Ok(event) => match event {
                     AsyncEvent::FilesChanged(changed) => files.extend(changed),
-                    AsyncEvent::StdinLine(line) => new_density_function = line,
+                    AsyncEvent::NewFunction(line) => new_density_function = line,
                     AsyncEvent::Exit => return PollResult::Exit,
                 },
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -227,38 +248,15 @@ impl ShaderModules {
 
         let mut status = PollResult::Ok;
         if !new_density_function.is_empty() {
-            match math_into_glsl(&new_density_function) {
-                Ok(glsl) => {
-                    self.density_fn_changed(glsl);
-                    status = PollResult::Recreate;
-                }
-                Err(e) => {
-                    let text = LazyDisplay(|f| writeln!(f, "\r{}", e));
-                    let error = graph::util::debug_callback::Colored(
-                        graph::tracing::Severity::Error,
-                        &text,
-                    );
-                    {
-                        let mut stdout = std::io::stdout().lock();
-                        write!(stdout, "{error}");
-                        if self.stdin.is_some() {
-                            print!("❯ ");
-                            stdout.flush();
-                        }
-                    }
-                    // if an error occured while parsing the first ever expression, we replace it with a dummy "0.0"
-                    // so that the graph is run even without producing any triangles
-                    // for example gnome/wayland does not display a window until a swapchain is acquired for the first time
-                    if self.density_function.is_none() {
-                        self.density_fn_changed(math_into_glsl(&"0.0").unwrap());
-                    }
-                }
-            }
+            self.density_fn_changed(new_density_function);
+            status = PollResult::Recreate;
+        } else if self.density_function.is_none() {
+            self.density_fn_changed(math_into_glsl(&"0.0").unwrap());
         }
 
-        if self.density_function.is_none() {
-            return PollResult::Skip;
-        }
+        // if self.density_function.is_none() {
+        //     return PollResult::Skip;
+        // }
 
         if !files.is_empty() {
             status = PollResult::Recreate;
@@ -370,9 +368,9 @@ impl ShaderModules {
     }
 }
 
-enum AsyncEvent {
+pub enum AsyncEvent {
     FilesChanged(Vec<PathBuf>),
-    StdinLine(String),
+    NewFunction(String),
     Exit,
 }
 
