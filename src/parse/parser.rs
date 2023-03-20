@@ -2,7 +2,7 @@ use std::{collections::VecDeque, fmt::Display};
 
 #[derive(Debug)]
 pub struct ParserError {
-    message: String,
+    pub message: String,
 }
 
 macro_rules! parse_error {
@@ -23,6 +23,7 @@ impl Display for ParserError {
 
 impl std::error::Error for ParserError {}
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOperation {
     Sub,
     Add,
@@ -37,6 +38,20 @@ pub enum BinaryOperation {
 }
 
 impl BinaryOperation {
+    pub fn eval(self, a: f32, b: f32) -> f32 {
+        match self {
+            BinaryOperation::Sub => a - b,
+            BinaryOperation::Add => a + b,
+            BinaryOperation::Div => a / b,
+            BinaryOperation::Mul => a * b,
+            BinaryOperation::Exp => a.powf(b),
+            BinaryOperation::Greater => (a > b) as u32 as f32,
+            BinaryOperation::Lower => (a < b) as u32 as f32,
+            BinaryOperation::GreaterEq => (a < b) as u32 as f32,
+            BinaryOperation::LowerEq => (a >= b) as u32 as f32,
+            BinaryOperation::Eq => (a <= b) as u32 as f32,
+        }
+    }
     pub fn try_from_token(token: &Token) -> Option<(Self, u8)> {
         let (precedence, token) = match token {
             Token::Sub => (4, BinaryOperation::Sub),
@@ -54,7 +69,7 @@ impl BinaryOperation {
 
         Some((token, precedence))
     }
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             BinaryOperation::Sub => "sub",
             BinaryOperation::Add => "add",
@@ -70,6 +85,7 @@ impl BinaryOperation {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOperation {
     Neg,
     Log,
@@ -85,10 +101,27 @@ pub enum UnaryOperation {
     ArcCos,
     ArcTan,
     ArcCotan,
-    Length,
 }
 
 impl UnaryOperation {
+    pub fn eval(self, a: f32) -> f32 {
+        match self {
+            UnaryOperation::Neg => -a,
+            UnaryOperation::Log => a.log10(),
+            UnaryOperation::Log2 => a.log2(),
+            UnaryOperation::Ln => a.ln(),
+            UnaryOperation::Sqrt => a.sqrt(),
+            UnaryOperation::Sin => a.sin(),
+            UnaryOperation::Cos => a.cos(),
+            UnaryOperation::Tan => a.tan(),
+            UnaryOperation::Abs => a.abs(),
+            UnaryOperation::CoTan => a.tan().recip(),
+            UnaryOperation::ArcSin => a.asin(),
+            UnaryOperation::ArcCos => a.acos(),
+            UnaryOperation::ArcTan => a.atan(),
+            UnaryOperation::ArcCotan => std::f32::consts::FRAC_2_PI - a.atan(),
+        }
+    }
     pub fn try_function_str(str: &str) -> Option<Self> {
         match str {
             "arccos" => Some(Self::ArcCos),
@@ -104,7 +137,6 @@ impl UnaryOperation {
             "sqrt" => Some(Self::Sqrt),
             "tan" => Some(Self::Tan),
             "abs" => Some(Self::Abs),
-            "length" => Some(Self::Length),
             _ => None,
         }
     }
@@ -124,12 +156,11 @@ impl UnaryOperation {
             UnaryOperation::ArcCos => "arccos",
             UnaryOperation::ArcTan => "arctan",
             UnaryOperation::ArcCotan => "arccotan",
-            UnaryOperation::Length => "length",
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum BuiltingVariable {
     X,
     Y,
@@ -392,12 +423,12 @@ pub fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
             Token::LParen => {
                 implicit_mul_eligible = true;
                 boxed_expr = parse_expr(parser, 8)?;
-                parser.ensure_token(&Token::RParen);
+                parser.ensure_token(&Token::RParen)?;
                 break 'monop;
             }
             Token::Abs => {
                 let child = parse_expr(parser, 8)?;
-                parser.ensure_token(&Token::Abs);
+                parser.ensure_token(&Token::Abs)?;
                 Expression::Unary {
                     op: UnaryOperation::Abs,
                     child,
@@ -410,7 +441,7 @@ pub fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
                     if let Token::LParen = parser.peek() {
                         parser.next();
                         child = parse_expr(parser, 8)?;
-                        parser.ensure_token(&Token::RParen);
+                        parser.ensure_token(&Token::RParen)?;
                     } else {
                         child = parse_expr(parser, 2)?;
                     }
@@ -609,7 +640,6 @@ pub fn array_eval(node: &Expression, x: &Lane, y: &Lane, z: &Lane, t: f32, out: 
                     ArcCos => a.acos(),
                     ArcTan => a.atan(),
                     ArcCotan => std::f32::consts::FRAC_2_PI - a.atan(),
-                    Length => panic!(),
                 }
             );
         }

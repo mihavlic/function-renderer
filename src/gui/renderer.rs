@@ -485,21 +485,7 @@ impl Renderer {
 
                 let entry = self.texture_images.entry(texture_id);
 
-                // this means that a new image is to be created with the size of this delta
-                if let Some(pos) = blit.pos {
-                    let Entry::Occupied(mut v) = entry else {
-                        panic!("Updating a not yet initialized image");
-                    };
-                    let texture = v.get_mut();
-
-                    let (texture_width, texture_height) =
-                        texture.image.get_create_info().size.get_2d().unwrap();
-                    if (pos[0] as u32 + width > texture_width)
-                        || (pos[1] as u32 + height > texture_height)
-                    {
-                        panic!("Write out of bounds for texture {:?}", texture_id);
-                    }
-
+                let mut maybe_remake_set = |texture: &mut TextureImage| {
                     if texture.options != blit.options {
                         let sampler = Self::get_sampler(&mut self.samplers, blit.options, device);
                         let new_set = self.set_allocator.allocate(
@@ -513,70 +499,96 @@ impl Renderer {
                         texture.options = blit.options;
                         texture.set = new_set;
                     }
-                } else {
-                    let Entry::Vacant(v) = entry else {
-                        // FIXME should this be supported?
-                        panic!("Creating new image for an already occupied handle");
-                    };
-
-                    let (character, index) = match texture_id {
-                        egui::TextureId::Managed(i) => ('M', i),
-                        egui::TextureId::User(i) => ('U', i),
-                    };
-
-                    let image = device
-                        .create_image(
-                            object::ImageCreateInfo {
-                                flags: vk::ImageCreateFlags::empty(),
-                                size: object::Extent::D2(width, height),
-                                // we explicitly want a UNORM format
-                                // because we want the fragment shader to not
-                                // convert our colors to linear space
-                                format: vk::Format::R8G8B8A8_UNORM,
-                                samples: vk::SampleCountFlags::C1,
-                                mip_levels: 1,
-                                array_layers: 1,
-                                tiling: vk::ImageTiling::OPTIMAL,
-                                usage: vk::ImageUsageFlags::SAMPLED
-                                    | vk::ImageUsageFlags::TRANSFER_DST,
-                                sharing_mode_concurrent: false,
-                                initial_layout: vk::ImageLayout::UNDEFINED,
-                                label: Some(format!("egui tex {character}#{index}").into()),
-                            },
-                            vma::AllocationCreateInfo {
-                                flags: vma::AllocationCreateFlags::empty(),
-                                preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                                usage: vma::MemoryUsage::AutoPreferDevice,
-                                ..Default::default()
-                            },
-                        )
-                        .unwrap();
-
-                    let sampler = Self::get_sampler(&mut self.samplers, blit.options, device);
-                    let view = image
-                        .get_view(
-                            &object::ImageViewCreateInfo {
-                                view_type: vk::ImageViewType::T2D,
-                                format: vk::Format::R8G8B8A8_UNORM,
-                                components: vk::ComponentMapping::default(),
-                                subresource_range: image.get_whole_subresource_range(),
-                            },
-                            GenerationId::NEVER,
-                        )
-                        .unwrap();
-                    let set = self
-                        .set_allocator
-                        .allocate(view, sampler, &self.desc_layout, device);
-
-                    let texture = TextureImage {
-                        image,
-                        set,
-                        view,
-                        options: blit.options,
-                    };
-
-                    v.insert(texture);
                 };
+
+                'handle_blit: {
+                    // this means that a new image is to be created with the size of this delta
+                    if let Some(pos) = blit.pos {
+                        let Entry::Occupied(mut v) = entry else {
+                           panic!("Updating a not yet initialized image");
+                        };
+                        let texture = &mut v.get_mut();
+                        let (texture_width, texture_height) =
+                            texture.image.get_create_info().size.get_2d().unwrap();
+                        if (pos[0] as u32 + width > texture_width)
+                            || (pos[1] as u32 + height > texture_height)
+                        {
+                            panic!("Write out of bounds for texture {:?}", texture_id);
+                        }
+                        maybe_remake_set(texture);
+                    } else {
+                        // we may get creation requests multiple times (at least for the font texture)
+                        if let Entry::Occupied(mut v) = entry {
+                            let (old_width, old_height) =
+                                v.get().image.get_create_info().size.get_2d().unwrap();
+
+                            if width == old_width && height == old_height {
+                                maybe_remake_set(v.get_mut());
+                                break 'handle_blit;
+                            } else {
+                                v.remove();
+                            }
+                        };
+
+                        let (character, index) = match texture_id {
+                            egui::TextureId::Managed(i) => ('M', i),
+                            egui::TextureId::User(i) => ('U', i),
+                        };
+
+                        let image = device
+                            .create_image(
+                                object::ImageCreateInfo {
+                                    flags: vk::ImageCreateFlags::empty(),
+                                    size: object::Extent::D2(width, height),
+                                    // we explicitly want a UNORM format
+                                    // because we want the fragment shader to not
+                                    // convert our colors to linear space
+                                    format: vk::Format::R8G8B8A8_UNORM,
+                                    samples: vk::SampleCountFlags::C1,
+                                    mip_levels: 1,
+                                    array_layers: 1,
+                                    tiling: vk::ImageTiling::OPTIMAL,
+                                    usage: vk::ImageUsageFlags::SAMPLED
+                                        | vk::ImageUsageFlags::TRANSFER_DST,
+                                    sharing_mode_concurrent: false,
+                                    initial_layout: vk::ImageLayout::UNDEFINED,
+                                    label: Some(format!("egui tex {character}#{index}").into()),
+                                },
+                                vma::AllocationCreateInfo {
+                                    flags: vma::AllocationCreateFlags::empty(),
+                                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                                    usage: vma::MemoryUsage::AutoPreferDevice,
+                                    ..Default::default()
+                                },
+                            )
+                            .unwrap();
+
+                        let sampler = Self::get_sampler(&mut self.samplers, blit.options, device);
+                        let view = image
+                            .get_view(
+                                &object::ImageViewCreateInfo {
+                                    view_type: vk::ImageViewType::T2D,
+                                    format: vk::Format::R8G8B8A8_UNORM,
+                                    components: vk::ComponentMapping::default(),
+                                    subresource_range: image.get_whole_subresource_range(),
+                                },
+                                GenerationId::NEVER,
+                            )
+                            .unwrap();
+                        let set =
+                            self.set_allocator
+                                .allocate(view, sampler, &self.desc_layout, device);
+
+                        let texture = TextureImage {
+                            image,
+                            set,
+                            view,
+                            options: blit.options,
+                        };
+
+                        self.texture_images.insert(texture_id, texture);
+                    }
+                }
 
                 let region = ImageBlitRegion {
                     offset: blit

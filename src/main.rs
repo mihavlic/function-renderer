@@ -4,10 +4,9 @@ mod arcball;
 mod gui;
 mod hotreaload;
 mod mesh_pass;
-mod parser;
+mod parse;
 mod pass;
 mod recomputation;
-mod write;
 mod yawpitch;
 
 use dolly::prelude::{Arm, Position, RightHanded, Smooth};
@@ -28,6 +27,7 @@ use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
 use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
+use parse::math_into_glsl;
 use pass::LambdaPass;
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
@@ -39,8 +39,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
+use winit::platform::wayland::WindowBuilderExtWayland;
 use winit::window::WindowBuilder;
-use write::math_into_glsl;
 use yawpitch::YawPitchZUp;
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
@@ -70,6 +70,7 @@ fn main() {
 
         let window = WindowBuilder::new()
             .with_inner_size(winit::dpi::LogicalSize::new(512.0f32, 512.0f32))
+            .with_title("Emil")
             .build(&event_loop)
             .unwrap();
 
@@ -79,8 +80,8 @@ fn main() {
         let modules = ShaderModules::new(
             // ShaderModulesConfig::WatchStdin,
             // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
-            ShaderModulesConfig::Static("sin(2sqrt(x*x+y*y+z*z)/pi)"),
-            // ShaderModulesConfig::Static("30 - z"),
+            // ShaderModulesConfig::Static("sin(2sqrt(x*x+y*y+z*z)/pi)"),
+            ShaderModulesConfig::None,
         );
         let cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
@@ -103,18 +104,18 @@ fn main() {
         let context = egui::Context::default();
         let mut winit = egui_winit::State::new(&event_loop);
         winit.set_max_texture_side(8192);
-        winit.set_pixels_per_point(window.scale_factor() as f32);
 
         let mut gui = GuiControl::new(
             modules.event_sender(),
             &[
-                "log(x*0.0001)/log(y/32) + 15 - z",
-                "64/sqrt((x-32)(x-32) + (y-32)(y-32)) - z + 15",
-                "16*sin(sqrt((x-32)(x-32) + (y-32)(y-32)) / 2pi) - z + 32",
-                "|x-32| + |y-32| - z",
-                "sin(2sqrt(x*x+y*y+z*z)/pi)",
-                "2000/((x-32)(y-32)) - z + 15",
-                "32/(y-32) - (z-32)",
+                "abs(cos(abs(0.1 * x)) + cos(abs(0.1 * y)) + cos(abs(0.1 * z))) - cos(0.01 * (x^2+y^2+z^2))",
+                // "log(x*0.0001)/log(y/32) + 15 - z",
+                // "64/sqrt((x-32)(x-32) + (y-32)(y-32)) - z + 15",
+                // "16*sin(sqrt((x-32)(x-32) + (y-32)(y-32)) / 2pi) - z + 32",
+                // "|x-32| + |y-32| - z",
+                // "sin(2sqrt(x*x+y*y+z*z)/pi)",
+                // "2000/((x-32)(y-32)) - z + 15",
+                // "32/(y-32) - (z-32)",
             ],
         );
 
@@ -123,8 +124,20 @@ fn main() {
         let mut modules_option = Some(modules);
         let mut cache_option = Some(cache);
 
+        let mut first = true;
+
         event_loop.run(move |event, _, control_flow| {
             if let Event::WindowEvent { window_id, event } = &event {
+                // match event {
+                //     WindowEvent::ScaleFactorChanged {
+                //         scale_factor,
+                //         new_inner_size,
+                //     } => {
+                //         // eprintln!("scale changed {scale_factor}");
+                //         return;
+                //     }
+                //     _ => {}
+                // }
                 let response = winit.on_event(&context, &event);
                 if response.consumed {
                     return;
@@ -185,7 +198,12 @@ fn main() {
                     window.request_redraw();
                 }
                 Event::RedrawRequested(_) => {
-                    control_flow.set_poll();
+                    // first ^= true;
+                    // if first {
+                    //     winit.set_pixels_per_point(1.0);
+                    // } else {
+                    //     winit.set_pixels_per_point(2.0);
+                    // }
 
                     let dt = prev.elapsed().as_secs_f32();
                     camera.update(dt);
@@ -210,9 +228,11 @@ fn main() {
                             || size.height == 0)
                         {
                             let new_input = winit.take_egui_input(&window);
+                            let pixels_per_point = new_input.pixels_per_point.unwrap_or(1.0);
                             context.begin_frame(new_input);
-                            gui.ui(&context);
+                            // gui.ui(&context);
                             let output = context.end_frame();
+                            winit.handle_platform_output(&window, &context, output.platform_output);
                             let clipped_meshes = context.tessellate(output.shapes);
 
                             {
@@ -220,6 +240,7 @@ fn main() {
                                 lock.camera = camera.final_transform;
                                 lock.primitives = clipped_meshes;
                                 lock.textures_delta.append(output.textures_delta);
+                                lock.pixels_per_point = pixels_per_point;
                             }
 
                             let result = graph.run(GraphRunConfig {
@@ -299,6 +320,11 @@ struct GuiControl {
 
 impl GuiControl {
     fn new(sender: Sender<AsyncEvent>, initial_history: &[&str]) -> Self {
+        if let Some(last) = initial_history.last() {
+            let fun = math_into_glsl(last).unwrap_or_else(|_| math_into_glsl("-1.0").unwrap());
+            sender.send(AsyncEvent::NewFunction(fun));
+        }
+
         Self {
             edit: initial_history.last().copied().unwrap_or("").to_owned(),
             sender,

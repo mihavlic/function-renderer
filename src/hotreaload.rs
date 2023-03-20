@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::{io, slice};
 
-use crate::write::{make_density_function, math_into_glsl, GlslCompiler};
+use crate::parse::{math_into_glsl, GlslCompiler};
 use graph::device::debug::LazyDisplay;
 use graph::device::reflection::ReflectedLayout;
 use graph::device::{self, read_spirv, DeviceCreateInfo, QueueFamilySelection};
@@ -35,8 +35,6 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::platform::run_return::EventLoopExtRunReturn;
 use winit::window::WindowBuilder;
-
-use crate::write::make_glsl_math;
 
 pub struct ModuleEntry {
     pub module: object::ShaderModule,
@@ -89,6 +87,7 @@ const DENSITY_FUNCTION_MAGIC: &str = "float density(vec4 d);";
 pub enum ShaderModulesConfig<'a> {
     Static(&'a str),
     WatchStdin,
+    None,
 }
 
 impl ShaderModules {
@@ -197,6 +196,7 @@ impl ShaderModules {
                         .unwrap(),
                 );
             }
+            ShaderModulesConfig::None => {}
         };
 
         s

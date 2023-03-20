@@ -27,7 +27,7 @@ image = "0.24.4"
 notify = "5.1.0"
 rustyline = "10.0.0"
 glam = "0.23.0"
-dolly = "0.4.0"
+dolly = "0.4.1"
 ahash = "0.8.3"
 shaderc = "0.8.2"
 
