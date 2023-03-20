@@ -78,10 +78,10 @@ fn main() {
         let swapchain = make_swapchain(&window, surface, &device);
 
         let modules = ShaderModules::new(
-            // ShaderModulesConfig::WatchStdin,
+            ShaderModulesConfig::WatchStdin,
             // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
             // ShaderModulesConfig::Static("sin(2sqrt(x*x+y*y+z*z)/pi)"),
-            ShaderModulesConfig::None,
+            // ShaderModulesConfig::None,
         );
         let cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
@@ -108,7 +108,7 @@ fn main() {
         let mut gui = GuiControl::new(
             modules.event_sender(),
             &[
-                "abs(cos(abs(0.1 * x)) + cos(abs(0.1 * y)) + cos(abs(0.1 * z))) - cos(0.01 * (x^2+y^2+z^2))",
+                // "abs(cos(abs(0.1 * x)) + cos(abs(0.1 * y)) + cos(abs(0.1 * z))) - cos(0.01 * (x^2+y^2+z^2))",
                 // "log(x*0.0001)/log(y/32) + 15 - z",
                 // "64/sqrt((x-32)(x-32) + (y-32)(y-32)) - z + 15",
                 // "16*sin(sqrt((x-32)(x-32) + (y-32)(y-32)) / 2pi) - z + 32",
@@ -296,6 +296,8 @@ fn main() {
                     }
                 }
                 Event::LoopDestroyed => {
+                    std::process::exit(0);
+
                     drop(graph.take());
                     drop(swapchain_option.take());
                     drop(modules_option.take());
@@ -321,8 +323,9 @@ struct GuiControl {
 impl GuiControl {
     fn new(sender: Sender<AsyncEvent>, initial_history: &[&str]) -> Self {
         if let Some(last) = initial_history.last() {
-            let fun = math_into_glsl(last).unwrap_or_else(|_| math_into_glsl("-1.0").unwrap());
-            sender.send(AsyncEvent::NewFunction(fun));
+            let (density, gradient) =
+                math_into_glsl(last).unwrap_or_else(|_| math_into_glsl("-1.0").unwrap());
+            sender.send(AsyncEvent::NewFunction { density, gradient });
         }
 
         Self {
@@ -334,7 +337,7 @@ impl GuiControl {
                 .copied()
                 .map(ToOwned::to_owned)
                 .collect(),
-            history_index: initial_history.len() - 1,
+            history_index: initial_history.len().saturating_sub(1),
         }
     }
     fn ui(&mut self, ctx: &egui::Context) {
@@ -348,11 +351,12 @@ impl GuiControl {
                 ui.horizontal(|ui| {
                     if ui.text_edit_singleline(&mut self.edit).lost_focus() {
                         match math_into_glsl(&self.edit) {
-                            Ok(ok) => {
+                            Ok((density, gradient)) => {
                                 self.history_index = self.history.len();
-                                self.history.push(ok.clone());
+                                self.history.push(self.edit.clone());
 
-                                self.sender.send(AsyncEvent::NewFunction(ok));
+                                self.sender
+                                    .send(AsyncEvent::NewFunction { density, gradient });
                                 self.error = None;
                             }
                             Err(e) => {
@@ -374,8 +378,9 @@ impl GuiControl {
                         self.history_index = new;
 
                         match math_into_glsl(&self.edit) {
-                            Ok(ok) => {
-                                self.sender.send(AsyncEvent::NewFunction(ok));
+                            Ok((density, gradient)) => {
+                                self.sender
+                                    .send(AsyncEvent::NewFunction { density, gradient });
                                 self.error = None;
                             }
                             Err(e) => {
@@ -412,17 +417,10 @@ unsafe fn make_graph(
         };
     }
 
-    let common = modules.retrieve_simple("shaders/common.h");
-
     let cache = RefCell::new(cache);
 
     let mut create_pipeline = |path: &str, needs_eval_fn: bool| -> Result<_, Box<dyn Error>> {
         let mut cache = cache.borrow_mut();
-
-        // this is getting criminal
-        cache.compute_located(args!(path), args!(common), || {
-            modules.invalidate_file(path);
-        });
         let module = modules.retrieve(path, device)?;
 
         let all_layout =
@@ -438,7 +436,7 @@ unsafe fn make_graph(
                 .unwrap()
             });
 
-        let pipeline = cache.compute_located(args!(path), args!(common, module), || {
+        let pipeline = cache.compute_located(args!(path), args!(module), || {
             let pipeline_info = object::ComputePipelineCreateInfo {
                 flags: vk::PipelineCreateFlags::empty(),
                 stage: PipelineStage {

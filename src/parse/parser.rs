@@ -35,6 +35,8 @@ pub enum BinaryOperation {
     GreaterEq,
     LowerEq,
     Eq,
+    Min,
+    Max,
 }
 
 impl BinaryOperation {
@@ -50,6 +52,15 @@ impl BinaryOperation {
             BinaryOperation::GreaterEq => (a < b) as u32 as f32,
             BinaryOperation::LowerEq => (a >= b) as u32 as f32,
             BinaryOperation::Eq => (a <= b) as u32 as f32,
+            BinaryOperation::Min => a.max(b),
+            BinaryOperation::Max => a.min(b),
+        }
+    }
+    pub fn try_function_str(str: &str) -> Option<Self> {
+        match str {
+            "min" => Some(Self::Min),
+            "max" => Some(Self::Max),
+            _ => None,
         }
     }
     pub fn try_from_token(token: &Token) -> Option<(Self, u8)> {
@@ -81,6 +92,8 @@ impl BinaryOperation {
             BinaryOperation::GreaterEq => "greatereq",
             BinaryOperation::LowerEq => "lowereq",
             BinaryOperation::Eq => "eq",
+            BinaryOperation::Min => "min",
+            BinaryOperation::Max => "max",
         }
     }
 }
@@ -259,6 +272,7 @@ pub fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
         }
 
         let tok = match cur {
+            ',' => Token::Comma,
             '(' => Token::LParen,
             ')' => Token::RParen,
             '*' => Token::Mul,
@@ -435,7 +449,15 @@ pub fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
                 }
             }
             Token::Ident(ident) => {
-                if let Some(op) = UnaryOperation::try_function_str(ident) {
+                if let Some(op) = BinaryOperation::try_function_str(ident) {
+                    parser.ensure_token(&Token::LParen)?;
+                    let left = parse_expr(parser, 8)?;
+                    parser.ensure_token(&Token::Comma)?;
+                    let right = parse_expr(parser, 8)?;
+                    parser.ensure_token(&Token::RParen)?;
+
+                    Expression::Binary { op, left, right }
+                } else if let Some(op) = UnaryOperation::try_function_str(ident) {
                     let child;
                     // handle differently `sin( expr )` and `sin expr`
                     if let Token::LParen = parser.peek() {
@@ -536,141 +558,141 @@ pub fn debug_ast(node: &Expression) {
     }
 }
 
-const LANE_WIDTH: usize = 8;
+// const LANE_WIDTH: usize = 8;
 
-#[repr(align(16))]
-#[derive(Default)]
-pub struct Lane([f32; LANE_WIDTH]);
+// #[repr(align(16))]
+// #[derive(Default)]
+// pub struct Lane([f32; LANE_WIDTH]);
 
-impl Lane {
-    pub fn splat(value: f32) -> Self {
-        Self([value; LANE_WIDTH])
-    }
-    pub fn zeroed() -> Self {
-        unsafe { Self(std::mem::zeroed()) }
-    }
-    pub fn raw(&self) -> &[f32; LANE_WIDTH] {
-        &self.0
-    }
-}
+// impl Lane {
+//     pub fn splat(value: f32) -> Self {
+//         Self([value; LANE_WIDTH])
+//     }
+//     pub fn zeroed() -> Self {
+//         unsafe { Self(std::mem::zeroed()) }
+//     }
+//     pub fn raw(&self) -> &[f32; LANE_WIDTH] {
+//         &self.0
+//     }
+// }
 
-macro_rules! lane_map {
-    ($in1:ident, $in2:ident, $out:ident, |$a:ident, $b:ident| $code:expr) => {
-        unsafe {
-            for i in 0..LANE_WIDTH {
-                let $a = *$in1.0.get_unchecked(i);
-                let $b = *$in2.0.get_unchecked(i);
-                *$out.0.get_unchecked_mut(i) = $code;
-            }
-        }
-    };
-}
+// macro_rules! lane_map {
+//     ($in1:ident, $in2:ident, $out:ident, |$a:ident, $b:ident| $code:expr) => {
+//         unsafe {
+//             for i in 0..LANE_WIDTH {
+//                 let $a = *$in1.0.get_unchecked(i);
+//                 let $b = *$in2.0.get_unchecked(i);
+//                 *$out.0.get_unchecked_mut(i) = $code;
+//             }
+//         }
+//     };
+// }
 
-macro_rules! lane_map_single {
-    ($in1:ident, $out:ident, |$a:ident| $code:expr) => {
-        for i in 0..LANE_WIDTH {
-            unsafe {
-                let $a = *$in1.0.get_unchecked(i);
-                *$out.0.get_unchecked_mut(i) = $code;
-            }
-        }
-    };
-}
+// macro_rules! lane_map_single {
+//     ($in1:ident, $out:ident, |$a:ident| $code:expr) => {
+//         for i in 0..LANE_WIDTH {
+//             unsafe {
+//                 let $a = *$in1.0.get_unchecked(i);
+//                 *$out.0.get_unchecked_mut(i) = $code;
+//             }
+//         }
+//     };
+// }
 
-macro_rules! lane_map_none {
-    ($out:ident, || $code:expr) => {
-        unsafe {
-            for i in 0..LANE_WIDTH {
-                *$out.0.get_unchecked_mut(i) = $code;
-            }
-        }
-    };
-}
+// macro_rules! lane_map_none {
+//     ($out:ident, || $code:expr) => {
+//         unsafe {
+//             for i in 0..LANE_WIDTH {
+//                 *$out.0.get_unchecked_mut(i) = $code;
+//             }
+//         }
+//     };
+// }
 
-macro_rules! unary_op_cases {
-    ($in1:ident, $out:ident, |$a:ident| $op:ident { $($variant:ident => $code:expr,)+ }) => {
-        match $op {
-            $(
-                UnaryOperation::$variant => lane_map_single!($in1, $out, |$a| $code),
-            )+
-        }
-    };
-}
+// macro_rules! unary_op_cases {
+//     ($in1:ident, $out:ident, |$a:ident| $op:ident { $($variant:ident => $code:expr,)+ }) => {
+//         match $op {
+//             $(
+//                 UnaryOperation::$variant => lane_map_single!($in1, $out, |$a| $code),
+//             )+
+//         }
+//     };
+// }
 
-macro_rules! binary_op_cases {
-    ($in1:ident, $in2:ident, $out:ident, |$a:ident, $b:ident| $op:ident { $($variant:ident => $code:expr,)+ }) => {
-        match $op {
-            $(
-                BinaryOperation::$variant => lane_map!($in1, $in2, $out, |$a, $b| $code),
-            )+
-        }
-    };
-}
+// macro_rules! binary_op_cases {
+//     ($in1:ident, $in2:ident, $out:ident, |$a:ident, $b:ident| $op:ident { $($variant:ident => $code:expr,)+ }) => {
+//         match $op {
+//             $(
+//                 BinaryOperation::$variant => lane_map!($in1, $in2, $out, |$a, $b| $code),
+//             )+
+//         }
+//     };
+// }
 
-macro_rules! none_cases {
-    ($out:ident, || $op:ident { $($variant:ident => $code:expr,)+ }) => {
-        match $op {
-            $(
-                BinaryOperation::$variant => lane_map_none!($out, || $code),
-            )+
-        }
-    };
-}
+// macro_rules! none_cases {
+//     ($out:ident, || $op:ident { $($variant:ident => $code:expr,)+ }) => {
+//         match $op {
+//             $(
+//                 BinaryOperation::$variant => lane_map_none!($out, || $code),
+//             )+
+//         }
+//     };
+// }
 
-pub fn array_eval(node: &Expression, x: &Lane, y: &Lane, z: &Lane, t: f32, out: &mut Lane) {
-    let mut tmp = Lane::zeroed();
+// pub fn array_eval(node: &Expression, x: &Lane, y: &Lane, z: &Lane, t: f32, out: &mut Lane) {
+//     let mut tmp = Lane::zeroed();
 
-    match node {
-        Expression::Number(value) => lane_map_none!(out, || *value),
-        Expression::Unary { op, child } => {
-            array_eval(child, x, y, z, t, out);
-            unary_op_cases!(
-                out, out, |a| op {
-                    Neg => -a,
-                    Log => a.log10(),
-                    Log2 => a.log2(),
-                    Ln => a.ln(),
-                    Sqrt => a.sqrt(),
-                    Sin => a.sin(),
-                    Cos => a.cos(),
-                    Tan => a.tan(),
-                    Abs => a.abs(),
-                    CoTan => a.tan().recip(),
-                    ArcSin => a.asin(),
-                    ArcCos => a.acos(),
-                    ArcTan => a.atan(),
-                    ArcCotan => std::f32::consts::FRAC_2_PI - a.atan(),
-                }
-            );
-        }
-        Expression::Binary { op, left, right } => {
-            array_eval(left, x, y, z, t, &mut tmp);
-            array_eval(right, x, y, z, t, out);
-            binary_op_cases!(tmp, out, out, |a, b| op {
-                Sub => a - b,
-                Add => a + b,
-                Div => a / b,
-                Mul => a * b,
-                Exp => a.powf(b),
-                Greater => (a > b) as u32 as f32,
-                Lower => (a < b) as u32 as f32,
-                GreaterEq => (a >= b) as u32 as f32,
-                LowerEq => (a <= b) as u32 as f32,
-                Eq => (a == b) as u32 as f32,
-            });
-        }
-        Expression::Builtin(builtin) => match builtin {
-            BuiltingVariable::X => lane_map_single!(x, out, |a| a),
-            BuiltingVariable::Y => lane_map_single!(y, out, |a| a),
-            BuiltingVariable::Z => lane_map_single!(z, out, |a| a),
-            BuiltingVariable::T => lane_map_none!(out, || t),
-        },
-        Expression::Constant(constant) => match constant {
-            Constant::E => lane_map_none!(out, || std::f32::consts::E),
-            Constant::Pi => lane_map_none!(out, || std::f32::consts::PI),
-        },
-        Expression::Variable(value) => {
-            todo!()
-        }
-    }
-}
+//     match node {
+//         Expression::Number(value) => lane_map_none!(out, || *value),
+//         Expression::Unary { op, child } => {
+//             array_eval(child, x, y, z, t, out);
+//             unary_op_cases!(
+//                 out, out, |a| op {
+//                     Neg => -a,
+//                     Log => a.log10(),
+//                     Log2 => a.log2(),
+//                     Ln => a.ln(),
+//                     Sqrt => a.sqrt(),
+//                     Sin => a.sin(),
+//                     Cos => a.cos(),
+//                     Tan => a.tan(),
+//                     Abs => a.abs(),
+//                     CoTan => a.tan().recip(),
+//                     ArcSin => a.asin(),
+//                     ArcCos => a.acos(),
+//                     ArcTan => a.atan(),
+//                     ArcCotan => std::f32::consts::FRAC_2_PI - a.atan(),
+//                 }
+//             );
+//         }
+//         Expression::Binary { op, left, right } => {
+//             array_eval(left, x, y, z, t, &mut tmp);
+//             array_eval(right, x, y, z, t, out);
+//             binary_op_cases!(tmp, out, out, |a, b| op {
+//                 Sub => a - b,
+//                 Add => a + b,
+//                 Div => a / b,
+//                 Mul => a * b,
+//                 Exp => a.powf(b),
+//                 Greater => (a > b) as u32 as f32,
+//                 Lower => (a < b) as u32 as f32,
+//                 GreaterEq => (a >= b) as u32 as f32,
+//                 LowerEq => (a <= b) as u32 as f32,
+//                 Eq => (a == b) as u32 as f32,
+//             });
+//         }
+//         Expression::Builtin(builtin) => match builtin {
+//             BuiltingVariable::X => lane_map_single!(x, out, |a| a),
+//             BuiltingVariable::Y => lane_map_single!(y, out, |a| a),
+//             BuiltingVariable::Z => lane_map_single!(z, out, |a| a),
+//             BuiltingVariable::T => lane_map_none!(out, || t),
+//         },
+//         Expression::Constant(constant) => match constant {
+//             Constant::E => lane_map_none!(out, || std::f32::consts::E),
+//             Constant::Pi => lane_map_none!(out, || std::f32::consts::PI),
+//         },
+//         Expression::Variable(value) => {
+//             todo!()
+//         }
+//     }
+// }

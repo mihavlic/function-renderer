@@ -4,9 +4,9 @@
 layout(local_size_x = 4 * 3, local_size_y = 4, local_size_z = 4) in;
 
 #include "compute_descriptors.glsl"
-#include "common.h"
 
 float density(vec4 d);
+vec4 gradient_density(vec4 d);
 
 const uvec3[] axes = {
     {1,0,0},
@@ -103,7 +103,7 @@ void main() {
     // if the intersection lies outside the range <0, 1.0> we force it to 0.0, which is specially regarded as empty
     if (-0.0001 <= x && x <= 1.0001) {
         vec3 worldspace_intersection = vec3(pos) + vec3(axis) * x;
-        vec3 gradient = calculate_gradient(worldspace_intersection);
+        vec3 gradient = gradient_density(vec4(worldspace_intersection, function_data.time)).xyz;
         vec3 normal = normalize(gradient);
 
         // the value of 0.0 is reserved for no intersection, so we nudge it to the smallest non-zero value

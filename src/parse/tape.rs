@@ -180,9 +180,14 @@ impl Tape {
     pub fn get_last_expression(&self) -> Option<SsaIndex> {
         self.tape.len().checked_sub(1).map(SsaIndex::from_usize)
     }
-    pub fn write_glsl(&self, out: &mut String, differentiate: bool) {
+    pub fn write_glsl(&self, differentiate: bool) -> String {
+        let mut out = String::new();
+        self.write_glsl_into(&mut out, differentiate);
+        out
+    }
+    pub fn write_glsl_into(&self, out: &mut String, differentiate: bool) {
         for (i, (s, used)) in self.tape.iter().enumerate() {
-            if *used == false {
+            if *used == false && !differentiate && i != (self.tape.len() - 1) {
                 continue;
             }
 
@@ -205,6 +210,8 @@ impl Tape {
                     BinaryOperation::GreaterEq => write!(f, "float({a} >= {b})"),
                     BinaryOperation::LowerEq => write!(f, "float({a} <= {b})"),
                     BinaryOperation::Eq => write!(f, "float({a} == {b})"),
+                    BinaryOperation::Min => write!(f, "min({a}, {b})"),
+                    BinaryOperation::Max => write!(f, "max({a}, {b})"),
                 },
                 SsaExpression::Unary { op, child: a } => match op {
                     UnaryOperation::Neg => write!(f, "-{a}"),
@@ -256,6 +263,8 @@ impl Tape {
                             BinaryOperation::GreaterEq |
                             BinaryOperation::LowerEq |
                             BinaryOperation::Eq => write!(f, "vec3 {dout} = 0.0"),
+                            BinaryOperation::Min => write!(f, "vec3 {dout};\nif ({a} < {b}) {{ {dout} = {da}; }} else {{ {dout} = {db}; }}"),
+                            BinaryOperation::Max => write!(f, "vec3 {dout};\nif ({a} < {b}) {{ {dout} = {db}; }} else {{ {dout} = {da}; }}"),
                         }
                     }
                     SsaExpression::Unary { op, child: a } => {
@@ -266,9 +275,9 @@ impl Tape {
                             UnaryOperation::Log => write!(f, "vec3 {dout} = {da} / ({a} * {LN_10})"),
                             UnaryOperation::Log2 => write!(f, "vec3 {dout} = {da} / ({a} * {LN_2})"),
                             UnaryOperation::Ln => write!(f, "vec3 {dout} = {da} / {a}"),
-                            UnaryOperation::Sqrt => write!(f, "{da} / (2.0 * {o})"),
-                            UnaryOperation::Sin => write!(f, "vec3 {dout} =  {da} * sin({a})"),
-                            UnaryOperation::Cos => write!(f, "vec3 {dout} = -{da} * cos({a})"),
+                            UnaryOperation::Sqrt => write!(f, "vec3 {dout} = {da} / (2.0 * {o})"),
+                            UnaryOperation::Sin => write!(f, "vec3 {dout} =  {da} * cos({a})"),
+                            UnaryOperation::Cos => write!(f, "vec3 {dout} = -{da} * sin({a})"),
                             UnaryOperation::Tan => write!(f, "float cos_{a} = cos({a});\nvec3 {dout} = {da} / (cos_{a} * cos_{a})"),
                             UnaryOperation::CoTan => write!(f, "float sin_{a} = sin({a});\nvec3 {dout} = -{da} / (sin_{a} * sin_{a})"),
                             UnaryOperation::Abs => write!(f, "vec3 {dout};\nif ({a} < 0.0) {{ {dout} = -{da}; }} else {{ {dout} = {da}; }}"),

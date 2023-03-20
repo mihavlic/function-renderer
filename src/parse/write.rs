@@ -1,6 +1,6 @@
 use crate::parse::{
-    self, array_eval, debug_ast, parse_expr, BinaryOperation, BuiltingVariable, Expression, Lane,
-    Parser, SsaExpression, Tape,
+    self, debug_ast, parse_expr, BinaryOperation, BuiltingVariable, Expression, Parser,
+    SsaExpression, Tape,
 };
 use graph::device::read_spirv;
 use pumice::vk;
@@ -17,156 +17,75 @@ use std::{
 
 use super::{parser, ParserError};
 
-// pub fn write_glsl(node: &Expression) -> String {
-//     let mut out = String::new();
-//     match node {
-//         Expression::Binary { op, left, right } => {
-//             let left = write_glsl(left);
-//             let right = write_glsl(right);
-//             match op {
-//                 BinaryOperation::Sub
-//                 | BinaryOperation::Add
-//                 | BinaryOperation::Div
-//                 | BinaryOperation::Mul => {
-//                     let c = match op {
-//                         BinaryOperation::Sub => '-',
-//                         BinaryOperation::Add => '+',
-//                         BinaryOperation::Div => '/',
-//                         BinaryOperation::Mul => '*',
-//                         _ => unreachable!(),
-//                     };
-//                     write!(out, "({left} {c} {right})").unwrap();
-//                 }
-//                 BinaryOperation::Exp => {
-//                     write!(out, "pow({left}, {right})").unwrap();
-//                 }
-//                 BinaryOperation::Greater
-//                 | BinaryOperation::Lower
-//                 | BinaryOperation::GreaterEq
-//                 | BinaryOperation::LowerEq
-//                 | BinaryOperation::Eq => {
-//                     let cmp = match op {
-//                         BinaryOperation::Greater => ">",
-//                         BinaryOperation::Lower => "<",
-//                         BinaryOperation::GreaterEq => ">=",
-//                         BinaryOperation::LowerEq => "<=",
-//                         BinaryOperation::Eq => "==",
-//                         _ => unreachable!(),
-//                     };
-//                     write!(out, "((float)({left} {cmp} {right}))").unwrap();
-//                 }
-//             }
-//         }
-//         Expression::Unary { op, child } => 'block: {
-//             let child = write_glsl(child);
-//             let name = match op {
-//                 parser::UnaryOperation::Neg => {
-//                     write!(out, "-{child}").unwrap();
-//                     break 'block;
-//                 }
-//                 parser::UnaryOperation::Log => {
-//                     write!(out, "log({child}) / log(10.0)").unwrap();
-//                     break 'block;
-//                 }
-//                 parser::UnaryOperation::Log2 => "log2",
-//                 parser::UnaryOperation::Ln => "log",
-//                 parser::UnaryOperation::Sqrt => "sqrt",
-//                 parser::UnaryOperation::Sin => "sin",
-//                 parser::UnaryOperation::Cos => "cos",
-//                 parser::UnaryOperation::Tan => "tan",
-//                 parser::UnaryOperation::Abs => "abs",
-//                 parser::UnaryOperation::CoTan => {
-//                     write!(out, "1.0 / tan({child})").unwrap();
-//                     break 'block;
-//                 }
-//                 parser::UnaryOperation::ArcSin => "asin",
-//                 parser::UnaryOperation::ArcCos => "scos",
-//                 parser::UnaryOperation::ArcTan => "atan",
-//                 parser::UnaryOperation::Length => "length",
-//                 parser::UnaryOperation::ArcCotan => {
-//                     write!(out, "CONSTANT_HALF_PI - atan({child})").unwrap();
-//                     break 'block;
-//                 }
-//             };
-//             write!(out, "{name}({child})").unwrap();
-//         }
-//         Expression::Builtin(b) => {
-//             let val = match b {
-//                 parser::BuiltingVariable::X => 'x',
-//                 parser::BuiltingVariable::Y => 'y',
-//                 parser::BuiltingVariable::Z => 'z',
-//                 parser::BuiltingVariable::T => 't',
-//             };
-//             out.push(val);
-//         }
-//         Expression::Constant(c) => {
-//             std::f32::consts::E;
-//             let c = match c {
-//                 parser::Constant::E => "CONSTANT_E",
-//                 parser::Constant::Pi => "CONSTANT_PI",
-//             };
-//             out.push_str(c);
-//         }
-//         Expression::Variable(_) => todo!(),
-//         Expression::Number(val) => {
-//             write!(out, "{:?}", val).unwrap();
-//         }
-//     }
-//     out
-// }
-
-// pub fn make_glsl_math(raw_math: &str) -> parser::Result<String> {
-//     let mut parser = Parser::new(raw_math)?;
-//     let root = parse_expr(&mut parser, u8::MAX)?;
-
-//     // eprint!("Debug ast of {}:  ", raw_math.trim());
-//     // debug_ast(&root);
-//     // eprintln!();
-
-//     Ok(write_glsl(&root))
-// }
-
 #[rustfmt::skip]
-pub fn math_into_glsl(expr: &str) -> parser::Result<String> {
-    let mut parser = Parser::new(expr)?;
-    let root = parse_expr(&mut parser, u8::MAX)?;
+pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
+    let density = {
+        let mut parser = Parser::new(expr)?;
+        parse_expr(&mut parser, u8::MAX)?
+    };
 
     let mut tape = Tape::new();
-
+    
     let x = tape.add(SsaExpression::Builtin(BuiltingVariable::X));
     let y = tape.add(SsaExpression::Builtin(BuiltingVariable::Y));
     let z = tape.add(SsaExpression::Builtin(BuiltingVariable::Z));
     let t = tape.add(SsaExpression::Builtin(BuiltingVariable::T));
-    tape.process_ast(&root);
+    
+    // select between the function having a shell at the edges of the evaluated range or not
+    let last = if true {
+        let box_sdf = {
+            let str = "
+            max(
+                max(
+                    max(0.5 - x, x - 61.5),
+                    max(0.5 - y, y - 61.5)
+                ),
+                max(0.5 - z, z - 61.5)
+            )
+            ";
+            let mut parser = Parser::new(str)?;
+            parse_expr(&mut parser, u8::MAX)?
+        };
 
-    let mut tape_statements =  String::new();
-    tape.write_glsl(&mut tape_statements, false);
-    let Some(last) = tape.get_last_expression() else {
-        return Err(ParserError {
-            message: "Expression is empty".to_owned(),
-        });
+        let invert = super::Expression::Unary { op: parse::UnaryOperation::Neg, child: density };
+        let density = tape.process_ast(&invert);
+        let box_sdf = tape.process_ast(&box_sdf);
+        tape.add(SsaExpression::Binary { op: BinaryOperation::Max, left: density, right: box_sdf })
+    } else {
+        tape.process_ast(&density)
     };
 
-    let str = format!(
-"float density(vec4 d) {{    
-    float {x} = d.x;
-    float {y} = d.y;
-    float {z} = d.z;
-    float {t} = d.w;
+    let density = {
+        let statements = tape.write_glsl(false).replace("\n", "\n    ");
+        format!(
+            "float density(vec4 d) {{    
+                float {x} = d.x;
+                float {y} = d.y;
+                float {z} = d.z;
+                float {t} = d.w;
 
-    if (
-        {x} <= 0.5 || {x} >= 61.5 ||
-        {y} <= 0.5 || {y} >= 61.5 ||
-        {z} <= 0.5 || {z} >= 61.5
-    ) {{
-        return -0.1;
-    }} else {{
-        {tape_statements}
-        return {last};
-    }}
-}}");
+                {statements}
+                return {last};
+            }}"
+        ).replace("\n            ", "\n")
+    };
 
-    Ok(str)
+    let diff = {
+        let statements = tape.write_glsl(true).replace("\n", "\n    ");
+        format!(
+            "vec4 gradient_density(vec4 d) {{    
+                float {x} = d.x;
+                float {y} = d.y;
+                float {z} = d.z;
+                float {t} = d.w;
+
+                {statements}
+                return vec4({last}d, {last});
+            }}"
+        ).replace("\n            ", "\n")
+    };
+
+    Ok((density, diff))
 }
 
 pub struct GlslCompiler {

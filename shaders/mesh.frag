@@ -5,6 +5,8 @@ layout(location = 1) in vec3 inViewPos;
 
 layout(location = 0) out vec4 outColor;
 
+vec4 gradient_density(vec4 d);
+
 float worldPosLine() {
     vec2 coord = inWorldPos.xy / 2.0;
     // Compute anti-aliased world-space grid lines
@@ -19,12 +21,11 @@ float worldPosLine() {
 }
 
 void main() {
-    vec3 world_normal = abs(normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos))));
     vec3 view_normal = normalize(cross(dFdx(inViewPos), dFdy(inViewPos)));
-
     float a = dot(view_normal, vec3(0.0, 0.0, 1.0));
 
 #if 1
+    vec3 world_normal = abs(normalize(gradient_density(vec4(inWorldPos, 0.0)).xyz));
     // for some reson the normals are wrongly swizzled?
     vec3 color = mix(vec3(1.0), world_normal.yxz, 0.6);
     color = mix(vec3(0.0), color, min(a + 0.5, 1.0));

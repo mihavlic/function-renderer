@@ -72,7 +72,7 @@ struct StdinWatcherData {
 }
 
 pub struct ShaderModules {
-    density_function: Option<String>,
+    density_function: Option<(String, String)>,
     modules: HashMap<PathBuf, MetaModuleEntry>,
     simple_files: HashMap<PathBuf, SimpleFileEntry>,
     watcher: notify::RecommendedWatcher,
@@ -83,6 +83,7 @@ pub struct ShaderModules {
 }
 
 const DENSITY_FUNCTION_MAGIC: &str = "float density(vec4 d);";
+const GRADIENT_FUNCTION_MAGIC: &str = "vec4 gradient_density(vec4 d);";
 
 pub enum ShaderModulesConfig<'a> {
     Static(&'a str),
@@ -119,9 +120,11 @@ impl ShaderModules {
             let mut rl = Editor::<()>::new().unwrap();
             rl.load_history(&path);
 
-            if let Some(last) = rl.history().last() {
-                println!("Displaying last function\n  {last}");
-                sender_copy.send(AsyncEvent::NewFunction(last.to_owned()));
+            if let Some(line) = rl.history().last() {
+                println!("Displaying last function\n  {line}");
+                if send_fun(line, &sender_copy) {
+                    return;
+                }
             }
 
             let mut history_file = File::options()
@@ -145,24 +148,8 @@ impl ShaderModules {
                         // append and entry to the history
                         writeln!(history_file, "{line}").unwrap();
 
-                        match math_into_glsl(&line) {
-                            Ok(ok) => {
-                                // send the valid function to be used for graphing
-                                // if the main thread exit, we'll exit too
-                                match sender_copy.send(AsyncEvent::NewFunction(ok)) {
-                                    Ok(_) => {}
-                                    Err(_) => break,
-                                }
-                            }
-                            Err(e) => {
-                                let error = graph::util::debug_callback::Colored(
-                                    graph::tracing::Severity::Error,
-                                    &e,
-                                );
-                                let mut stdout = std::io::stdout().lock();
-                                write!(stdout, "\r{error}\n❯ ");
-                                stdout.flush();
-                            }
+                        if send_fun(&line, &sender_copy) {
+                            break;
                         }
                     }
                     Err(_) => {
@@ -204,7 +191,7 @@ impl ShaderModules {
     pub fn event_sender(&self) -> Sender<AsyncEvent> {
         self.sender.clone()
     }
-    fn density_fn_changed(&mut self, new: String) {
+    fn density_fn_changed(&mut self, new: (String, String)) {
         self.density_function = Some(new);
         for m in self.modules.values_mut() {
             if m.needs_density_fn {
@@ -230,13 +217,15 @@ impl ShaderModules {
         self.invalidate_file_impl(&path);
     }
     pub fn poll(&mut self) -> PollResult {
-        let mut new_density_function = String::new();
+        let mut new_density_functions = None;
         let mut files = Vec::new();
         loop {
             match self.receiver.try_recv() {
                 Ok(event) => match event {
                     AsyncEvent::FilesChanged(changed) => files.extend(changed),
-                    AsyncEvent::NewFunction(line) => new_density_function = line,
+                    AsyncEvent::NewFunction { density, gradient } => {
+                        new_density_functions = Some((density, gradient))
+                    }
                     AsyncEvent::Exit => return PollResult::Exit,
                 },
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -247,8 +236,8 @@ impl ShaderModules {
         }
 
         let mut status = PollResult::Ok;
-        if !new_density_function.is_empty() {
-            self.density_fn_changed(new_density_function);
+        if let Some(funs) = new_density_functions {
+            self.density_fn_changed(funs);
             status = PollResult::Recreate;
         } else if self.density_function.is_none() {
             self.density_fn_changed(math_into_glsl(&"0.0").unwrap());
@@ -309,14 +298,16 @@ impl ShaderModules {
             // the linter use some dummy definition for the macro because its arguments are given
             // just as a string so nothing with whitespace can be defined }and quotes don't work for
             // some reason
-            let needs_density_fn = source.contains(DENSITY_FUNCTION_MAGIC);
+            let needs_density_fn =
+                source.contains(DENSITY_FUNCTION_MAGIC) || source.contains(GRADIENT_FUNCTION_MAGIC);
 
             if needs_density_fn {
-                assert!(self.density_function.is_some());
-                source = source.replace(
-                    DENSITY_FUNCTION_MAGIC,
-                    self.density_function.as_ref().unwrap(),
-                );
+                let Some((density, gradient)) = self.density_function.as_ref() else {
+                    panic!()
+                };
+
+                source = source.replace(DENSITY_FUNCTION_MAGIC, density);
+                source = source.replace(GRADIENT_FUNCTION_MAGIC, gradient);
             }
 
             let spirv = self
@@ -368,9 +359,29 @@ impl ShaderModules {
     }
 }
 
+fn send_fun(line: &str, sender: &Sender<AsyncEvent>) -> bool {
+    match math_into_glsl(line) {
+        Ok((density, gradient)) => {
+            // send the valid function to be used for graphing
+            // if the main thread exit, we'll exit too
+            match sender.send(AsyncEvent::NewFunction { density, gradient }) {
+                Ok(_) => false,
+                Err(_) => true,
+            }
+        }
+        Err(e) => {
+            let error = graph::util::debug_callback::Colored(graph::tracing::Severity::Error, &e);
+            let mut stdout = std::io::stdout().lock();
+            write!(stdout, "\r{error}\n❯ ");
+            stdout.flush();
+            false
+        }
+    }
+}
+
 pub enum AsyncEvent {
     FilesChanged(Vec<PathBuf>),
-    NewFunction(String),
+    NewFunction { density: String, gradient: String },
     Exit,
 }
 
