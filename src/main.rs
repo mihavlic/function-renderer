@@ -1,6 +1,5 @@
 #![allow(unused)]
 
-mod arcball;
 mod gui;
 mod hotreaload;
 mod mesh_pass;
