@@ -5,8 +5,9 @@ use graph::{
         batch::GenerationId, maybe_attach_debug_label, staging::ImageWrite,
         submission::QueueSubmission, Device,
     },
+    graph::execute::GraphExecutor,
     object::{self},
-    smallvec::smallvec,
+    smallvec::{smallvec, SmallVec},
     storage::DefaultAhashRandomstate,
     util::ffi_ptr::AsFFiPtr,
 };
@@ -16,6 +17,7 @@ use slice_group_by::GroupBy;
 use std::{
     collections::{hash_map::Entry, HashMap},
     ffi::c_void,
+    hash::{BuildHasher, Hash, Hasher},
 };
 
 const VERTEX_BUFFER_COUNT: usize = 1024 * 1024 * 4;
@@ -420,11 +422,15 @@ impl Renderer {
             .get_handle()
     }
 
+    #[must_use]
     unsafe fn update_textures(
         &mut self,
         delta: &TexturesDelta,
+        cmd: vk::CommandBuffer,
+        queue_family: u32,
+        submission: QueueSubmission,
         device: &Device,
-    ) -> Option<QueueSubmission> {
+    ) -> SmallVec<[QueueSubmission; 4]> {
         for tex in self.pending_retired_textures.drain(..) {
             let entry = self.texture_images.remove(&tex).unwrap();
             self.set_allocator.free_set(entry.set);
@@ -552,7 +558,7 @@ impl Renderer {
                                         | vk::ImageUsageFlags::TRANSFER_DST,
                                     sharing_mode_concurrent: false,
                                     initial_layout: vk::ImageLayout::UNDEFINED,
-                                    label: Some(format!("egui tex {character}#{index}").into()),
+                                    label: Some(format!("Egui texture {character}#{index}").into()),
                                 },
                                 vma::AllocationCreateInfo {
                                     flags: vma::AllocationCreateFlags::empty(),
@@ -606,10 +612,11 @@ impl Renderer {
         }
 
         if output_blits.is_empty() {
-            return None;
+            return SmallVec::new();
         }
 
-        let submission = device.write_multiple(|staging| {
+        let submissions = device.write_multiple(|staging| {
+            let mut submissions = SmallVec::new();
             for (image, blits) in output_blits {
                 let image = self.texture_images.get(&image).unwrap();
                 // TODO create a better api that doesn't require a vector
@@ -637,28 +644,33 @@ impl Renderer {
                     })
                     .collect();
 
-                staging.write_image(
+                let wait_for = staging.write_image_in_cmd(
                     &image.image,
                     Some(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
                     std::alloc::Layout::new::<Color32>(),
                     regions,
+                    cmd,
+                    queue_family,
+                    submission,
+                    device,
                     move |ptr, i, _| {
                         ptr.copy_from_nonoverlapping(blits[i].data.as_ptr(), blits[i].data.len());
                     },
-                    device,
                 );
+                submissions.extend(wait_for);
             }
+            submissions
         });
 
-        debug_assert!(submission.is_some());
-
-        submission
+        submissions
     }
 
     /// Record paint commands.
     pub unsafe fn paint(
         &mut self,
         command_buffer: vk::CommandBuffer,
+        queue_family: u32,
+        submission: QueueSubmission,
 
         color_view: vk::ImageView,
         color_flags: vk::ImageCreateFlags,
@@ -678,7 +690,7 @@ impl Renderer {
         [width, height]: [u32; 2],
 
         device: &Device,
-    ) {
+    ) -> SmallVec<[QueueSubmission; 4]> {
         if self.resolve_attachment {
             assert!(resolve_view != vk::ImageView::null());
         }
@@ -687,7 +699,13 @@ impl Renderer {
             self.set_allocator.free_set(set);
         }
 
-        self.update_textures(textures_delta, device);
+        let wait_submission = self.update_textures(
+            textures_delta,
+            command_buffer,
+            queue_family,
+            submission,
+            device,
+        );
 
         let framebuffer_size_differs = || {
             let info = self.framebuffer.as_ref().unwrap().get_create_info();
@@ -741,9 +759,11 @@ impl Renderer {
                 clear_value_count = 1;
             }
 
+            let attachments = [color_view, resolve_view];
+
             let attachment_info = vk::RenderPassAttachmentBeginInfoKHR {
                 attachment_count: 1 + self.resolve_attachment as u32,
-                p_attachments: [color_view, resolve_view].as_ptr(),
+                p_attachments: attachments.as_ptr(),
                 ..Default::default()
             };
 
@@ -917,5 +937,7 @@ impl Renderer {
         }
 
         d.cmd_end_render_pass(command_buffer);
+
+        wait_submission
     }
 }

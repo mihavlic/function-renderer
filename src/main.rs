@@ -78,10 +78,10 @@ fn main() {
         let swapchain = make_swapchain(&window, surface, &device);
 
         let modules = ShaderModules::new(
-            ShaderModulesConfig::WatchStdin,
+            // ShaderModulesConfig::WatchStdin,
             // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
             // ShaderModulesConfig::Static("sin(2sqrt(x*x+y*y+z*z)/pi)"),
-            // ShaderModulesConfig::None,
+            ShaderModulesConfig::None,
         );
         let cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
@@ -108,7 +108,7 @@ fn main() {
         let mut gui = GuiControl::new(
             modules.event_sender(),
             &[
-                // "abs(cos(abs(0.1 * x)) + cos(abs(0.1 * y)) + cos(abs(0.1 * z))) - cos(0.01 * (x^2+y^2+z^2))",
+                "abs(cos(abs(0.1 * x)) + cos(abs(0.1 * y)) + cos(abs(0.1 * z))) - cos(0.01 * (x^2+y^2+z^2))",
                 // "log(x*0.0001)/log(y/32) + 15 - z",
                 // "64/sqrt((x-32)(x-32) + (y-32)(y-32)) - z + 15",
                 // "16*sin(sqrt((x-32)(x-32) + (y-32)(y-32)) / 2pi) - z + 32",
@@ -128,16 +128,6 @@ fn main() {
 
         event_loop.run(move |event, _, control_flow| {
             if let Event::WindowEvent { window_id, event } = &event {
-                // match event {
-                //     WindowEvent::ScaleFactorChanged {
-                //         scale_factor,
-                //         new_inner_size,
-                //     } => {
-                //         // eprintln!("scale changed {scale_factor}");
-                //         return;
-                //     }
-                //     _ => {}
-                // }
                 let response = winit.on_event(&context, &event);
                 if response.consumed {
                     return;
@@ -198,13 +188,6 @@ fn main() {
                     window.request_redraw();
                 }
                 Event::RedrawRequested(_) => {
-                    // first ^= true;
-                    // if first {
-                    //     winit.set_pixels_per_point(1.0);
-                    // } else {
-                    //     winit.set_pixels_per_point(2.0);
-                    // }
-
                     let dt = prev.elapsed().as_secs_f32();
                     camera.update(dt);
 
@@ -230,7 +213,7 @@ fn main() {
                             let new_input = winit.take_egui_input(&window);
                             let pixels_per_point = new_input.pixels_per_point.unwrap_or(1.0);
                             context.begin_frame(new_input);
-                            // gui.ui(&context);
+                            gui.ui(&context);
                             let output = context.end_frame();
                             winit.handle_platform_output(&window, &context, output.platform_output);
                             let clipped_meshes = context.tessellate(output.shapes);
@@ -1153,8 +1136,10 @@ unsafe fn make_graph(
 
                     let mut data = state.lock().unwrap();
 
-                    egui_pass.lock().unwrap().paint(
+                    let copy_submissions = egui_pass.lock().unwrap().paint(
                         e.command_buffer(),
+                        e.get_current_queue().family(),
+                        e.get_current_submission(),
                         color_view,
                         vk::ImageCreateFlags::empty(),
                         color_usage,
@@ -1170,6 +1155,10 @@ unsafe fn make_graph(
                         [width, height],
                         d,
                     );
+
+                    for s in copy_submissions {
+                        e.add_extra_submission_dependency(s);
+                    }
 
                     data.primitives.clear();
                     data.textures_delta.clear();

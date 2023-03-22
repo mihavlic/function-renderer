@@ -100,11 +100,6 @@ impl RecomputationCache {
                 result
             }
             Entry::Vacant(v) => {
-                // eprintln!(
-                //     "Inserting compute_impl {:?} {:?}",
-                //     fingerprint.0,
-                //     TypeId::of::<T>()
-                // );
                 let result = fun();
                 v.insert(ComputationEntry {
                     result: Box::new(result.clone()),

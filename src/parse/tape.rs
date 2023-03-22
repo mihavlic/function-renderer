@@ -25,19 +25,13 @@ impl Display for SsaIndex {
 pub struct TotalF32(f32);
 impl PartialEq for TotalF32 {
     fn eq(&self, other: &Self) -> bool {
-        unsafe {
-            let a = std::mem::transmute::<f32, u32>(self.0);
-            let b = std::mem::transmute::<f32, u32>(other.0);
-            a == b
-        }
+        self.0.to_bits() == other.0.to_bits()
     }
 }
 impl Eq for TotalF32 {}
 impl Hash for TotalF32 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        unsafe {
-            std::mem::transmute::<f32, u32>(self.0).hash(state);
-        }
+        self.0.to_bits().hash(state)
     }
 }
 
