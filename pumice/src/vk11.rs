@@ -1419,8 +1419,7 @@ impl DescriptorUpdateTemplateType {
 crate::enum_impl! {
     DescriptorUpdateTemplateType : i32, DESCRIPTOR_SET
 }
-#[doc(alias = "VkSubgroupFeatureFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSubgroupFeatureFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSubgroupFeatureFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct SubgroupFeatureFlags(pub u32);
@@ -1438,8 +1437,7 @@ crate::bitflags_impl! {
     SubgroupFeatureFlags : u32, 0xff, BASIC, VOTE, ARITHMETIC, BALLOT, SHUFFLE,
     SHUFFLE_RELATIVE, CLUSTERED, QUAD
 }
-#[doc(alias = "VkExternalMemoryHandleTypeFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalMemoryHandleTypeFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalMemoryHandleTypeFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct ExternalMemoryHandleTypeFlags(pub u32);
@@ -1456,8 +1454,7 @@ crate::bitflags_impl! {
     ExternalMemoryHandleTypeFlags : u32, 0x7f, OPAQUE_FD, OPAQUE_WIN32, OPAQUE_WIN32_KMT,
     D3D11_TEXTURE, D3D11_TEXTURE_KMT, D3D12_HEAP, D3D12_RESOURCE
 }
-#[doc(alias = "VkExternalMemoryFeatureFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalMemoryFeatureFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalMemoryFeatureFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct ExternalMemoryFeatureFlags(pub u32);
@@ -1469,8 +1466,7 @@ impl ExternalMemoryFeatureFlags {
 crate::bitflags_impl! {
     ExternalMemoryFeatureFlags : u32, 0x7, DEDICATED_ONLY, EXPORTABLE, IMPORTABLE
 }
-#[doc(alias = "VkExternalSemaphoreHandleTypeFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalSemaphoreHandleTypeFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalSemaphoreHandleTypeFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct ExternalSemaphoreHandleTypeFlags(pub u32);
@@ -1486,8 +1482,7 @@ crate::bitflags_impl! {
     ExternalSemaphoreHandleTypeFlags : u32, 0x1f, OPAQUE_FD, OPAQUE_WIN32,
     OPAQUE_WIN32_KMT, D3D12_FENCE, SYNC_FD
 }
-#[doc(alias = "VkExternalSemaphoreFeatureFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalSemaphoreFeatureFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalSemaphoreFeatureFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct ExternalSemaphoreFeatureFlags(pub u32);
@@ -1498,8 +1493,7 @@ impl ExternalSemaphoreFeatureFlags {
 crate::bitflags_impl! {
     ExternalSemaphoreFeatureFlags : u32, 0x3, EXPORTABLE, IMPORTABLE
 }
-#[doc(alias = "VkSemaphoreImportFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSemaphoreImportFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSemaphoreImportFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct SemaphoreImportFlags(pub u32);
@@ -1509,8 +1503,7 @@ impl SemaphoreImportFlags {
 crate::bitflags_impl! {
     SemaphoreImportFlags : u32, 0x1, TEMPORARY
 }
-#[doc(alias = "VkExternalFenceHandleTypeFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalFenceHandleTypeFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalFenceHandleTypeFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct ExternalFenceHandleTypeFlags(pub u32);
@@ -1524,8 +1517,7 @@ crate::bitflags_impl! {
     ExternalFenceHandleTypeFlags : u32, 0xf, OPAQUE_FD, OPAQUE_WIN32, OPAQUE_WIN32_KMT,
     SYNC_FD
 }
-#[doc(alias = "VkExternalFenceFeatureFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalFenceFeatureFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkExternalFenceFeatureFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct ExternalFenceFeatureFlags(pub u32);
@@ -1536,8 +1528,7 @@ impl ExternalFenceFeatureFlags {
 crate::bitflags_impl! {
     ExternalFenceFeatureFlags : u32, 0x3, EXPORTABLE, IMPORTABLE
 }
-#[doc(alias = "VkFenceImportFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkFenceImportFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkFenceImportFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct FenceImportFlags(pub u32);
@@ -1547,8 +1538,7 @@ impl FenceImportFlags {
 crate::bitflags_impl! {
     FenceImportFlags : u32, 0x1, TEMPORARY
 }
-#[doc(alias = "VkPeerMemoryFeatureFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkPeerMemoryFeatureFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkPeerMemoryFeatureFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct PeerMemoryFeatureFlags(pub u32);
@@ -1561,8 +1551,7 @@ impl PeerMemoryFeatureFlags {
 crate::bitflags_impl! {
     PeerMemoryFeatureFlags : u32, 0xf, COPY_SRC, COPY_DST, GENERIC_SRC, GENERIC_DST
 }
-#[doc(alias = "VkMemoryAllocateFlags")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkMemoryAllocateFlags.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkMemoryAllocateFlagBits.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct MemoryAllocateFlags(pub u32);
@@ -1580,6 +1569,9 @@ pub struct PointClippingBehavior(pub i32);
 impl PointClippingBehavior {
     pub const ALL_CLIP_PLANES: Self = Self(0);
     pub const USER_CLIP_PLANES_ONLY: Self = Self(1);
+    /// khr_maintenance2
+    pub const ALL_CLIP_PLANES_KHR: Self = Self::ALL_CLIP_PLANES;
+    pub const USER_CLIP_PLANES_ONLY_KHR: Self = Self::USER_CLIP_PLANES_ONLY;
 }
 crate::enum_impl! {
     PointClippingBehavior : i32, ALL_CLIP_PLANES, USER_CLIP_PLANES_ONLY
@@ -1592,6 +1584,9 @@ pub struct TessellationDomainOrigin(pub i32);
 impl TessellationDomainOrigin {
     pub const UPPER_LEFT: Self = Self(0);
     pub const LOWER_LEFT: Self = Self(1);
+    /// khr_maintenance2
+    pub const UPPER_LEFT_KHR: Self = Self::UPPER_LEFT;
+    pub const LOWER_LEFT_KHR: Self = Self::LOWER_LEFT;
 }
 crate::enum_impl! {
     TessellationDomainOrigin : i32, UPPER_LEFT, LOWER_LEFT

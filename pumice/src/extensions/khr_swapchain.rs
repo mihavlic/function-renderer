@@ -202,8 +202,7 @@ impl Default for DeviceGroupSwapchainCreateInfoKHR {
         }
     }
 }
-#[doc(alias = "VkDeviceGroupPresentModeFlagsKHR")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkDeviceGroupPresentModeFlagsKHR.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkDeviceGroupPresentModeFlagBitsKHR.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct DeviceGroupPresentModeFlagsKHR(pub u32);
@@ -216,8 +215,7 @@ impl DeviceGroupPresentModeFlagsKHR {
 crate::bitflags_impl! {
     DeviceGroupPresentModeFlagsKHR : u32, 0xf, LOCAL, REMOTE, SUM, LOCAL_MULTI_DEVICE
 }
-#[doc(alias = "VkSwapchainCreateFlagsKHR")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSwapchainCreateFlagsKHR.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSwapchainCreateFlagBitsKHR.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct SwapchainCreateFlagsKHR(pub u32);

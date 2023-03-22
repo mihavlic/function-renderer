@@ -75,8 +75,7 @@ impl ColorSpaceKHR {
 crate::enum_impl! {
     ColorSpaceKHR : i32, SRGB_NONLINEAR
 }
-#[doc(alias = "VkCompositeAlphaFlagsKHR")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkCompositeAlphaFlagsKHR.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkCompositeAlphaFlagBitsKHR.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct CompositeAlphaFlagsKHR(pub u32);
@@ -89,8 +88,7 @@ impl CompositeAlphaFlagsKHR {
 crate::bitflags_impl! {
     CompositeAlphaFlagsKHR : u32, 0xf, OPAQUE, PRE_MULTIPLIED, POST_MULTIPLIED, INHERIT
 }
-#[doc(alias = "VkSurfaceTransformFlagsKHR")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSurfaceTransformFlagsKHR.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkSurfaceTransformFlagBitsKHR.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct SurfaceTransformFlagsKHR(pub u32);

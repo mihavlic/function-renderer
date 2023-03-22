@@ -11,6 +11,8 @@ surface = ["raw-window-handle"]
 global = []
 raw = []
 wrappers = []
+deep_copy = []
+dumb_hash = []
 
 [dependencies]
 libloading = { version = "0.7", optional = true }

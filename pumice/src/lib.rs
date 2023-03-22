@@ -2,7 +2,9 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 
+#[cfg(feature = "deep_copy")]
 pub mod deep_copy;
+#[cfg(feature = "dumb_hash")]
 pub mod dumb_hash;
 pub mod loader;
 #[cfg(feature = "surface")]

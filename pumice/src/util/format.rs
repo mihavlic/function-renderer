@@ -34,8 +34,13 @@ macro_rules! aspects {
 }
 
 impl FormatAspectBits {
-    pub fn total_bits(self) -> u8 {
-        self.color + self.depth + self.stencil + self.unused
+    pub fn total_bits(self) -> u32 {
+        self.color as u32 + self.depth as u32 + self.stencil as u32 + self.unused as u32
+    }
+    pub fn total_bytes(self) -> u32 {
+        let bits = self.total_bits();
+        assert!(bits % 8 == 0, "Bits aren't a multiple of 8");
+        bits / 8
     }
 }
 impl crate::vk10::Format {
@@ -162,9 +167,9 @@ impl crate::vk10::Format {
             Self::R64G64B64_UINT => aspects!(192, 0, 0, 0, COLOR),
             Self::R64G64B64_SINT => aspects!(192, 0, 0, 0, COLOR),
             Self::R64G64B64_SFLOAT => aspects!(192, 0, 0, 0, COLOR),
-            Self::R64G64B64A64_UINT => aspects!(0, 0, 0, 0, COLOR),
-            Self::R64G64B64A64_SINT => aspects!(0, 0, 0, 0, COLOR),
-            Self::R64G64B64A64_SFLOAT => aspects!(0, 0, 0, 0, COLOR),
+            Self::R64G64B64A64_UINT => aspects!(256, 0, 0, 0, COLOR),
+            Self::R64G64B64A64_SINT => aspects!(256, 0, 0, 0, COLOR),
+            Self::R64G64B64A64_SFLOAT => aspects!(256, 0, 0, 0, COLOR),
             Self::B10G11R11_UFLOAT_PACK32 => aspects!(32, 0, 0, 0, COLOR),
             Self::E5B9G9R9_UFLOAT_PACK32 => aspects!(27, 0, 0, 0, COLOR),
             Self::D16_UNORM => aspects!(0, 16, 0, 0, DEPTH),

@@ -156,8 +156,7 @@ impl Default for DebugUtilsMessengerCallbackDataEXT {
         }
     }
 }
-#[doc(alias = "VkDebugUtilsMessageSeverityFlagsEXT")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkDebugUtilsMessageSeverityFlagsEXT.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkDebugUtilsMessageSeverityFlagBitsEXT.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct DebugUtilsMessageSeverityFlagsEXT(pub u32);
@@ -170,8 +169,7 @@ impl DebugUtilsMessageSeverityFlagsEXT {
 crate::bitflags_impl! {
     DebugUtilsMessageSeverityFlagsEXT : u32, 0x1111, VERBOSE, INFO, WARNING, ERROR
 }
-#[doc(alias = "VkDebugUtilsMessageTypeFlagsEXT")]
-/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkDebugUtilsMessageTypeFlagsEXT.html)
+/// [Vulkan Specification](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/VkDebugUtilsMessageTypeFlagBitsEXT.html)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(transparent)]
 pub struct DebugUtilsMessageTypeFlagsEXT(pub u32);
