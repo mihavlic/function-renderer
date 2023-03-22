@@ -82,8 +82,8 @@ pub struct ShaderModules {
     compiler: GlslCompiler,
 }
 
-const DENSITY_FUNCTION_MAGIC: &str = "float density(vec4 d);";
-const GRADIENT_FUNCTION_MAGIC: &str = "vec4 gradient_density(vec4 d);";
+const DENSITY_FUNCTION_MAGIC: &str = "float density(vec4 d, vec3 n);";
+const GRADIENT_FUNCTION_MAGIC: &str = "vec4 gradient_density(vec4 d, vec3 n);";
 
 pub enum ShaderModulesConfig<'a> {
     Static(&'a str),

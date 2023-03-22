@@ -4,6 +4,9 @@
 layout(push_constant, scalar) uniform PushConstant { 
     mat4 model_matrix;
     mat4 projection_matrix;
+    vec3 rect_min;
+    vec3 rect_max;
+    float time;
 } push;
 
 layout(location = 0) in vec3 inPosition;

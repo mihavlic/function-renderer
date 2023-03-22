@@ -5,18 +5,14 @@ layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 #include "compute_descriptors.glsl"
 
-float density(vec4 d);
+float density(vec4 d, vec3 n);
 
 void main() {
     uvec3 global_id = gl_GlobalInvocationID.xyz;
-    vec3 pos = vec3(global_id) * function_data.scale - function_data.offset;
+    vec3 normalized_pos = vec3(global_id) / 63.0;
+    vec4 density_input = normalized_pos_to_density_input(normalized_pos);
 
-    float d = density(vec4(pos, function_data.time));
-    
-    // const float infinity = 1.0 / 0.0;
-    // if (abs(d) == infinity) {
-    //     d = 0.0;
-    // }
+    float d = density(density_input, normalized_pos);
     
     imageStore(function_values, ivec3(global_id.xyz), vec4(d));
 }

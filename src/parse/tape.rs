@@ -66,7 +66,7 @@ impl Tape {
             _ => None,
         }
     }
-    fn mark_used(&mut self, index: SsaIndex) {
+    pub fn mark_used(&mut self, index: SsaIndex) {
         self.tape[index.0 as usize].1 = true;
     }
     pub fn process_ast(&mut self, exppression: &super::Expression) -> SsaIndex {
@@ -283,9 +283,15 @@ impl Tape {
                     }
                     SsaExpression::Constant(v) => write!(f, "vec3 {dout} = vec3(0.0)"),
                     SsaExpression::Builtin(b) => match b {
-                        BuiltingVariable::X => write!(f, "vec3 {dout} = vec3(1.0, 0.0, 0.0)"),
-                        BuiltingVariable::Y => write!(f, "vec3 {dout} = vec3(0.0, 1.0, 0.0)"),
-                        BuiltingVariable::Z => write!(f, "vec3 {dout} = vec3(0.0, 0.0, 1.0)"),
+                        BuiltingVariable::X | BuiltingVariable::X_normalized => {
+                            write!(f, "vec3 {dout} = vec3(1.0, 0.0, 0.0)")
+                        }
+                        BuiltingVariable::Y | BuiltingVariable::Y_normalized => {
+                            write!(f, "vec3 {dout} = vec3(0.0, 1.0, 0.0)")
+                        }
+                        BuiltingVariable::Z | BuiltingVariable::Z_normalized => {
+                            write!(f, "vec3 {dout} = vec3(0.0, 0.0, 1.0)")
+                        }
                         BuiltingVariable::T => write!(f, "vec3 {dout} = vec3(0.0, 0.0, 0.0)"),
                     },
                 }

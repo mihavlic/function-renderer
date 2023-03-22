@@ -173,12 +173,16 @@ impl UnaryOperation {
     }
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum BuiltingVariable {
     X,
     Y,
     Z,
     T,
+    X_normalized,
+    Y_normalized,
+    Z_normalized,
 }
 
 impl BuiltingVariable {
@@ -188,6 +192,9 @@ impl BuiltingVariable {
             "Y" | "y" => Some(Self::Y),
             "Z" | "z" => Some(Self::Z),
             "t" => Some(Self::T),
+            "x_normalized" => Some(Self::X_normalized),
+            "y_normalized" => Some(Self::Y_normalized),
+            "z_normalized" => Some(Self::Z_normalized),
             _ => None,
         }
     }
@@ -469,8 +476,10 @@ pub fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
                     }
                     Expression::Unary { op, child }
                 } else if let Some(builtin) = BuiltingVariable::try_from_str(ident) {
+                    implicit_mul_eligible = true;
                     Expression::Builtin(builtin)
                 } else if let Some(constant) = Constant::try_from_str(ident) {
+                    implicit_mul_eligible = true;
                     Expression::Constant(constant)
                 } else {
                     return parse_error!("Unknown identifier '{ident}' when parsing monoop");

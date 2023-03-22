@@ -41,6 +41,7 @@ use winit::platform::wayland::WindowBuilderExtWayland;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
 
+use crate::parse::{MAX_MARGIN, MIN_MARGIN};
 use crate::passes::{LambdaPass, MeshPass};
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
@@ -50,6 +51,9 @@ pub struct FrameData {
     primitives: Vec<egui::ClippedPrimitive>,
     textures_delta: egui::TexturesDelta,
     pixels_per_point: f32,
+    rect_min: Vec3,
+    rect_max: Vec3,
+    time: f32,
 }
 
 impl Default for FrameData {
@@ -59,6 +63,9 @@ impl Default for FrameData {
             primitives: Default::default(),
             textures_delta: Default::default(),
             pixels_per_point: 1.0,
+            rect_min: Vec3::splat(0.0),
+            rect_max: Vec3::splat(63.0),
+            time: 0.0,
         }
     }
 }
@@ -87,13 +94,13 @@ fn main() {
         let mut compiler = GraphCompiler::new();
 
         let mut camera: CameraRig = CameraRig::builder()
-            .with(Position::new(Vec3::splat(32.0)))
-            .with(YawPitchZUp::new().pitch_degrees(25.0).yaw_degrees(90.0))
+            .with(Position::new(Vec3::splat(29.7)))
+            .with(YawPitchZUp::new().pitch_degrees(25.0).yaw_degrees(0.0))
             .with(Smooth::new_rotation(0.25))
             .with(Arm::new(Vec3::Z * 120.0))
             .build();
 
-        let transform: Arc<Mutex<FrameData>> = Arc::new(Mutex::new(FrameData::default()));
+        let frame_data: Arc<Mutex<FrameData>> = Arc::new(Mutex::new(FrameData::default()));
 
         let mut prev = std::time::Instant::now();
         let mut mouse_left_pressed = false;
@@ -107,15 +114,17 @@ fn main() {
 
         let mut gui = GuiControl::new(
             modules.event_sender(),
+            frame_data.clone(),
             &[
-                "abs(cos(abs(0.1 * x)) + cos(abs(0.1 * y)) + cos(abs(0.1 * z))) - cos(0.01 * (x^2+y^2+z^2))",
-                // "log(x*0.0001)/log(y/32) + 15 - z",
-                // "64/sqrt((x-32)(x-32) + (y-32)(y-32)) - z + 15",
-                // "16*sin(sqrt((x-32)(x-32) + (y-32)(y-32)) / 2pi) - z + 32",
-                // "|x-32| + |y-32| - z",
-                // "sin(2sqrt(x*x+y*y+z*z)/pi)",
-                // "2000/((x-32)(y-32)) - z + 15",
-                // "32/(y-32) - (z-32)",
+                "log(0.001 x)/log(y) - z",
+                "128/sqrt((x)(x) + (y)(y)) - z",
+                "8*sin(sqrt(x^2 + y^2) / 2pi) - z",
+                "|x| + |y| - z",
+                "sin(2sqrt(x^2+y^2+z^2)/pi)",
+                "2000/(x y) - z + 15",
+                "y - z",
+                "sin(x)",
+                "cos(abs(x)) + cos(abs(y)) + cos(abs(z)) - cos(x^2+y^2+z^2)",
             ],
         );
 
@@ -219,7 +228,7 @@ fn main() {
                             let clipped_meshes = context.tessellate(output.shapes);
 
                             {
-                                let mut lock = transform.lock().unwrap();
+                                let mut lock = frame_data.lock().unwrap();
                                 lock.camera = camera.final_transform;
                                 lock.primitives = clipped_meshes;
                                 lock.textures_delta.append(output.textures_delta);
@@ -257,7 +266,7 @@ fn main() {
                         let result = make_graph(
                             &swapchain,
                             queue,
-                            transform.clone(),
+                            frame_data.clone(),
                             &mut modules,
                             &mut compiler,
                             &mut cache,
@@ -419,7 +428,7 @@ unsafe fn make_graph(
         "function_values",
     );
     let intersections = create_image(
-        vk::Format::R16G16B16A16_SNORM,
+        vk::Format::R32G32B32A32_SFLOAT,
         object::Extent::D3(64 * 3, 64, 64),
         "intersections",
     );
@@ -603,41 +612,22 @@ unsafe fn make_graph(
         }
 
         let whole_descriptor_pipeline_layout_copy = whole_descriptor_pipeline_layout.clone();
+        let state_copy = state.clone();
         let get_or_create_descriptor =
             move |e: &GraphExecutor, device: &Device| -> GlobalDescriptorData {
-                // layout(binding = 0, r16) uniform image3D function_values;
-                // layout(binding = 1, rgba8) uniform image3D intersections;
-                // layout(binding = 2, r32ui) uniform uimage3D vertex_indices;
-                // layout(binding = 3, scalar) buffer VertexData {
-                //     uint size;
-                //     uint offset;
-                // 	Vertex vertices[];
-                // } vertices;
-                // layout(binding = 4, scalar) buffer IndexData {
-                //     uint size;
-                //     uint offset;
-                // 	uint indices[];
-                // } indices;
-                // layout(binding = 5, scalar) uniform FunctionData {
-                // 	uvec3 size;
-                //     vec3 offset;
-                //     float scale;
-                //     float time;
-                // } function_data;
-
-                struct PushConstant {
-                    size: [u32; 3],
-                    offset: [f32; 3],
-                    scale: f32,
+                struct FunctionData {
+                    rect_min: Vec3,
+                    rect_max: Vec3,
                     time: f32,
                 }
 
-                let data = PushConstant {
-                    size: [64; 3],
-                    offset: [0.0; 3],
-                    scale: 1.0,
-                    // TODO plumb around a common elapsed time and delta
-                    time: 0.0,
+                let data = {
+                    let state = state_copy.lock().unwrap();
+                    FunctionData {
+                        rect_min: state.rect_min - MIN_MARGIN,
+                        rect_max: state.rect_max + MAX_MARGIN,
+                        time: state.time,
+                    }
                 };
 
                 let uniform = e.allocate_uniform_element(&data);

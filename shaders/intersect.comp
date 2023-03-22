@@ -5,8 +5,8 @@ layout(local_size_x = 4 * 3, local_size_y = 4, local_size_z = 4) in;
 
 #include "compute_descriptors.glsl"
 
-float density(vec4 d);
-vec4 gradient_density(vec4 d);
+float density(vec4 d, vec3 n);
+vec4 gradient_density(vec4 d, vec3 n);
 
 const uvec3[] axes = {
     {1,0,0},
@@ -27,20 +27,12 @@ void main() {
     // initially clear the output texture
     imageStore(intersections, ivec3(index), vec4(0.0));
 
-    if (pos2.x > (3 * 64 - 1) || pos2.y > 63 || pos2.z > 63) {
+    if (pos2.x > (3 * 64 - 3) || pos2.y > 63 || pos2.z > 63) {
         return;
     }
 
     float p1 = imageLoad(function_values, ivec3(pos)).x;
     float p2 = imageLoad(function_values, ivec3(pos2)).x;
-
-    // const float infinity = 1.0 / 0.0;
-
-    // // infinity plays kind of poorly with our zero crossing detection
-    // // we get better results when rejecting it
-    // if (abs(p1) == infinity || abs(p2) == infinity) {
-    //     return;
-    // }
 
     // early exit if the sign is the same
     if ((p1 >= 0.0) == (p2 >= 0.0)) {
@@ -83,7 +75,10 @@ void main() {
 
     const float tolerance = 0.01;
     for (int i = 0; i < 10; i++) {
-        float x_density = density(vec4(fpos + x * faxis, function_data.time));
+        vec3 normalized_pos = (fpos + x * faxis) / 63.0;
+        vec4 density_input = normalized_pos_to_density_input(normalized_pos);
+
+        float x_density = density(density_input, normalized_pos);
 
         if (x_density == 0 || (b - a) < tolerance) {
             break;
@@ -102,8 +97,10 @@ void main() {
 
     // if the intersection lies outside the range <0, 1.0> we force it to 0.0, which is specially regarded as empty
     if (-0.0001 <= x && x <= 1.0001) {
-        vec3 worldspace_intersection = vec3(pos) + vec3(axis) * x;
-        vec3 gradient = gradient_density(vec4(worldspace_intersection, function_data.time)).xyz;
+        vec3 normalized_pos = (vec3(pos) + vec3(axis) * x) / 63.0;
+        vec4 density_input = normalized_pos_to_density_input(normalized_pos);
+        
+        vec3 gradient = gradient_density(density_input, normalized_pos).xyz;
         vec3 normal = normalize(gradient);
 
         // the value of 0.0 is reserved for no intersection, so we nudge it to the smallest non-zero value

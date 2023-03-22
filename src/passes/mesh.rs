@@ -14,7 +14,10 @@ use graph::{
 };
 use pumice::{util::ObjectHandle, vk};
 
-use crate::FrameData;
+use crate::{
+    parse::{MAX_MARGIN, MIN_MARGIN},
+    FrameData,
+};
 
 pub struct MeshPass {
     pub pipeline: GraphicsPipeline,
@@ -242,28 +245,46 @@ impl RenderPass for CreatedMeshPass {
             self.pipeline.get_handle(),
         );
 
-        let perspective = Mat4::perspective_rh(
-            1.2 * std::f32::consts::FRAC_PI_4,
-            (width as f32) / (height as f32),
-            0.2,
-            512.0,
-        );
-        let world_to_view = {
-            let transform = self.info.transform.lock().unwrap().camera;
-            let ro = Mat4::from_quat(transform.rotation.conjugate());
-            let tr = Mat4::from_translation(-transform.position);
-            ro * tr
-        };
+        struct PushConstants {
+            model_matrix: Mat4,
+            projection_matrix: Mat4,
+            rect_min: Vec3,
+            rect_max: Vec3,
+            time: f32,
+        }
 
-        let matrices = [world_to_view, perspective];
+        let push = {
+            let state = self.info.transform.lock().unwrap();
+            let camera = state.camera;
+
+            let perspective = Mat4::perspective_rh(
+                1.2 * std::f32::consts::FRAC_PI_4,
+                (width as f32) / (height as f32),
+                0.2,
+                512.0,
+            );
+            let world_to_view = {
+                let ro = Mat4::from_quat(camera.rotation.conjugate());
+                let tr = Mat4::from_translation(-camera.position);
+                ro * tr
+            };
+
+            PushConstants {
+                model_matrix: world_to_view,
+                projection_matrix: perspective,
+                rect_min: state.rect_min - MIN_MARGIN,
+                rect_max: state.rect_max + MAX_MARGIN,
+                time: state.time,
+            }
+        };
 
         d.cmd_push_constants(
             cmd,
             self.pipeline.get_object().get_create_info().layout.raw(),
-            vk::ShaderStageFlags::VERTEX,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
-            std::mem::size_of_val(&matrices) as u32,
-            matrices.as_ptr().cast(),
+            std::mem::size_of::<PushConstants>() as u32,
+            (&push) as *const _ as *const _,
         );
 
         d.cmd_bind_vertex_buffers(cmd, 0, &[executor.get_buffer(self.info.vertices)], &[8]);
