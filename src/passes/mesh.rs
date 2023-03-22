@@ -14,9 +14,9 @@ use graph::{
 };
 use pumice::{util::ObjectHandle, vk};
 
-use crate::{arcball::ArcballCamera, FrameData};
+use crate::FrameData;
 
-pub struct SimpleShader {
+pub struct MeshPass {
     pub pipeline: GraphicsPipeline,
     pub attachments: Vec<GraphImage>,
     pub resolve_attachments: Vec<GraphImage>,
@@ -27,7 +27,7 @@ pub struct SimpleShader {
     pub transform: Arc<Mutex<FrameData>>,
 }
 
-impl CreatePass for SimpleShader {
+impl CreatePass for MeshPass {
     type PreparedData = GraphicsPipelinePromise;
     fn prepare(&mut self, builder: &mut GraphPassBuilder) -> Self::PreparedData {
         for &image in &self.attachments {
@@ -101,19 +101,19 @@ impl CreatePass for SimpleShader {
         ctx: &mut GraphContext,
     ) -> Box<dyn RenderPass + Send> {
         let pipeline = ctx.resolve_graphics_pipeline(prepared);
-        Box::new(SimpleShaderPass {
+        Box::new(CreatedMeshPass {
             info: self,
             pipeline,
         })
     }
 }
 
-struct SimpleShaderPass {
-    info: SimpleShader,
+struct CreatedMeshPass {
+    info: MeshPass,
     pipeline: ConcreteGraphicsPipeline,
 }
 
-impl RenderPass for SimpleShaderPass {
+impl RenderPass for CreatedMeshPass {
     unsafe fn execute(
         &mut self,
         executor: &GraphExecutor,

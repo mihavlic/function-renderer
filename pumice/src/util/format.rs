@@ -1,9 +1,9 @@
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FormatAspectBits {
-    pub color: u8,
-    pub depth: u8,
-    pub stencil: u8,
-    pub unused: u8,
+    pub color: u16,
+    pub depth: u16,
+    pub stencil: u16,
+    pub unused: u16,
 }
 
 macro_rules! aspects {

@@ -2,9 +2,8 @@
 
 mod gui;
 mod hotreaload;
-mod mesh_pass;
 mod parse;
-mod pass;
+mod passes;
 mod recomputation;
 mod yawpitch;
 
@@ -25,9 +24,9 @@ use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
+use gui::GuiControl;
 use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
 use parse::math_into_glsl;
-use pass::LambdaPass;
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
 use std::cell::RefCell;
@@ -41,6 +40,8 @@ use winit::event_loop::EventLoop;
 use winit::platform::wayland::WindowBuilderExtWayland;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
+
+use crate::passes::{LambdaPass, MeshPass};
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
 
@@ -291,91 +292,6 @@ fn main() {
                 _ => (),
             }
         });
-    }
-}
-
-struct GuiControl {
-    edit: String,
-    sender: Sender<AsyncEvent>,
-    error: Option<String>,
-    history: Vec<String>,
-    history_index: usize,
-}
-
-impl GuiControl {
-    fn new(sender: Sender<AsyncEvent>, initial_history: &[&str]) -> Self {
-        if let Some(last) = initial_history.last() {
-            let (density, gradient) =
-                math_into_glsl(last).unwrap_or_else(|_| math_into_glsl("-1.0").unwrap());
-            sender.send(AsyncEvent::NewFunction { density, gradient });
-        }
-
-        Self {
-            edit: initial_history.last().copied().unwrap_or("").to_owned(),
-            sender,
-            error: None,
-            history: initial_history
-                .iter()
-                .copied()
-                .map(ToOwned::to_owned)
-                .collect(),
-            history_index: initial_history.len().saturating_sub(1),
-        }
-    }
-    fn ui(&mut self, ctx: &egui::Context) {
-        egui::Window::new("")
-            .id(egui::Id::new("Control"))
-            .fixed_pos((8.0, 8.0))
-            .fixed_size((180.0, 0.0))
-            .title_bar(false)
-            .show(ctx, |ui| {
-                let mut new_index = None;
-                ui.horizontal(|ui| {
-                    if ui.text_edit_singleline(&mut self.edit).lost_focus() {
-                        match math_into_glsl(&self.edit) {
-                            Ok((density, gradient)) => {
-                                self.history_index = self.history.len();
-                                self.history.push(self.edit.clone());
-
-                                self.sender
-                                    .send(AsyncEvent::NewFunction { density, gradient });
-                                self.error = None;
-                            }
-                            Err(e) => {
-                                self.error = Some(e.to_string());
-                            }
-                        }
-                    }
-                    if ui.button("Prev").clicked() {
-                        new_index = self.history_index.checked_sub(1);
-                    }
-                    if ui.button("Next").clicked() {
-                        new_index = self.history_index.checked_add(1);
-                    }
-                });
-
-                if let Some(new) = new_index {
-                    if let Some(f) = self.history.get(new) {
-                        self.edit = f.clone();
-                        self.history_index = new;
-
-                        match math_into_glsl(&self.edit) {
-                            Ok((density, gradient)) => {
-                                self.sender
-                                    .send(AsyncEvent::NewFunction { density, gradient });
-                                self.error = None;
-                            }
-                            Err(e) => {
-                                self.error = Some(e.to_string());
-                            }
-                        }
-                    }
-                }
-
-                if let Some(e) = self.error.as_ref() {
-                    ui.colored_label(Color32::RED, e);
-                }
-            });
     }
 }
 
@@ -1097,7 +1013,7 @@ unsafe fn make_graph(
 
         b.add_pass(
             queue,
-            mesh_pass::SimpleShader {
+            MeshPass {
                 pipeline,
                 attachments,
                 resolve_attachments,
