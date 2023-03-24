@@ -24,7 +24,7 @@ use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
-use gui::GuiControl;
+use gui::{egui_icon_font_family, GuiControl, FONT_BYTES};
 use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
 use parse::math_into_glsl;
 use pumice::{util::ApiLoadConfig, vk};
@@ -109,6 +109,8 @@ fn main() {
         let mut graph: Option<CompiledGraph> = None;
 
         let context = egui::Context::default();
+        set_fonts(&context);
+        // context.fonts_mut(|fonts| fonts.unwrap().get)
         let mut winit = egui_winit::State::new(&event_loop);
         winit.set_max_texture_side(8192);
 
@@ -1215,4 +1217,21 @@ unsafe fn make_swapchain(
     };
 
     device.create_swapchain(info).unwrap()
+}
+
+fn set_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    fonts.font_data.insert(
+        "MFG Labs icons".to_owned(),
+        egui::FontData::from_static(FONT_BYTES),
+    );
+
+    fonts
+        .families
+        .entry(egui_icon_font_family())
+        .or_default()
+        .push("MFG Labs icons".to_owned());
+
+    ctx.set_fonts(fonts);
 }

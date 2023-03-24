@@ -1,4 +1,5 @@
 use crate::{
+    gui::egui_icon_font_family,
     hotreaload::AsyncEvent,
     parse::{math_into_glsl, MAX_MARGIN, MIN_MARGIN},
     FrameData,
@@ -10,59 +11,20 @@ use std::{
     sync::{mpsc::Sender, Arc, Mutex},
 };
 
-fn clickable_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    egui::Label::new(egui::RichText::new(text).size(14.0))
-        .sense(egui::Sense::click())
-        .ui(ui)
+use super::icons;
+
+fn icon_button(ui: &mut egui::Ui, icon: char) -> egui::Response {
+    egui::Label::new(
+        egui::RichText::new(icon).font(egui::FontId::new(12.5, egui_icon_font_family())),
+    )
+    .sense(egui::Sense::click())
+    .ui(ui)
 }
 
 trait FunctionIntervalControl: 'static {
     fn init(&mut self, min: Vec3, max: Vec3);
     fn ui(&mut self, ui: &mut Ui);
     fn output(&self) -> (Vec3, Vec3);
-}
-
-#[derive(Default)]
-struct IntervalControl {
-    locked: bool,
-    min: Vec3,
-    max: Vec3,
-}
-
-impl FunctionIntervalControl for IntervalControl {
-    fn init(&mut self, min: Vec3, max: Vec3) {
-        self.min = min;
-        self.max = max;
-    }
-
-    fn ui(&mut self, ui: &mut Ui) {
-        egui::Grid::new("interval grid").show(ui, |ui| {
-            ui.checkbox(&mut self.locked, "locked");
-            ui.end_row();
-
-            let locked = self.locked;
-
-            ui.label("min");
-            ui.add(egui::DragValue::new(&mut self.min.x).speed(0.1));
-            ui.add_enabled(!locked, egui::DragValue::new(&mut self.min.y).speed(0.1));
-            ui.add_enabled(!locked, egui::DragValue::new(&mut self.min.z).speed(0.1));
-            ui.end_row();
-
-            ui.label("max");
-            ui.add(egui::DragValue::new(&mut self.max.x).speed(0.1));
-            ui.add_enabled(!locked, egui::DragValue::new(&mut self.max.y).speed(0.1));
-            ui.add_enabled(!locked, egui::DragValue::new(&mut self.max.z).speed(0.1));
-
-            if locked {
-                self.max = Vec3::splat(self.max.x);
-                self.min = Vec3::splat(self.min.x);
-            }
-        });
-    }
-
-    fn output(&self) -> (Vec3, Vec3) {
-        (self.min, self.max)
-    }
 }
 
 #[derive(Default)]
@@ -79,24 +41,32 @@ impl FunctionIntervalControl for CenterControl {
     }
 
     fn ui(&mut self, ui: &mut Ui) {
-        egui::Grid::new("center grid").show(ui, |ui| {
-            ui.label("pos");
-            ui.add(egui::DragValue::new(&mut self.center.x).speed(0.1));
-            ui.add(egui::DragValue::new(&mut self.center.y).speed(0.1));
-            ui.add(egui::DragValue::new(&mut self.center.z).speed(0.1));
-            if clickable_text(ui, "↺").clicked() {
-                self.center = Vec3::ZERO;
-            }
-            ui.end_row();
+        egui::Grid::new("center grid")
+            .min_col_width(0.0)
+            .spacing((5.5, 3.0))
+            .show(ui, |ui| {
+                ui.label("pos");
+                ui.add(egui::DragValue::new(&mut self.center.x).speed(0.1));
+                ui.add(egui::DragValue::new(&mut self.center.y).speed(0.1));
+                ui.add(egui::DragValue::new(&mut self.center.z).speed(0.1));
+                ui.add_space(180.0 - ui.cursor().left());
+                if icon_button(ui, icons::CCW).clicked() {
+                    self.center = Vec3::ZERO;
+                }
+                ui.end_row();
 
-            ui.label("half");
-            ui.add(
-                egui::DragValue::new(&mut self.half)
-                    .speed(0.1)
-                    .clamp_range(0.01..=f32::INFINITY),
-            );
-            ui.end_row();
-        });
+                ui.label("half");
+                ui.add(
+                    egui::DragValue::new(&mut self.half)
+                        .speed(0.1)
+                        .clamp_range(0.01..=f32::INFINITY),
+                );
+                ui.add_space(180.0 - ui.cursor().left());
+                if icon_button(ui, icons::CCW).clicked() {
+                    self.half = 16.0;
+                }
+                ui.end_row();
+            });
     }
 
     fn output(&self) -> (Vec3, Vec3) {
@@ -152,9 +122,21 @@ impl GuiControl {
         }
     }
     pub fn ui(&mut self, ctx: &egui::Context) {
+        let color = ctx.style().visuals.window_fill;
         egui::Window::new("")
             .id(egui::Id::new("Control"))
             .fixed_pos((8.0, 8.0))
+            .frame(egui::containers::Frame {
+                outer_margin: egui::Margin::same(0.0),
+                inner_margin: egui::Margin::same(5.0),
+                rounding: egui::Rounding::same(5.0),
+                fill: color,
+                stroke: egui::Stroke::new(0.0, color),
+                shadow: egui::epaint::Shadow {
+                    extrusion: 8.0,
+                    color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 50),
+                },
+            })
             .auto_sized()
             .title_bar(false)
             .show(ctx, |ui| {
@@ -167,15 +149,13 @@ impl GuiControl {
 
                 fn circle_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
                     let stroke = ui.style().interact(&response).fg_stroke;
-                    let radius = egui::lerp(5.0..=8.0, openness);
-                    // ui.label(egui::RichText::new("⚙").color(stroke.color).size(7.0));
                     ui.painter().text(
                         response.rect.center(),
                         egui::Align2::CENTER_CENTER,
-                        "⚙",
+                        super::icons::COG,
                         egui::FontId {
-                            size: 16.0,
-                            family: egui::FontFamily::Proportional,
+                            size: 15.0,
+                            family: egui_icon_font_family(),
                         },
                         stroke.color,
                     );
@@ -186,7 +166,12 @@ impl GuiControl {
                 ui.horizontal(|ui| {
                     state.show_toggle_button(ui, circle_icon);
                     if state.is_open() {
-                        if ui.text_edit_singleline(&mut self.edit).lost_focus() {
+                        if egui::TextEdit::singleline(&mut self.edit)
+                            .font(egui::TextStyle::Monospace)
+                            .show(ui)
+                            .response
+                            .lost_focus()
+                        {
                             match math_into_glsl(&self.edit) {
                                 Ok((density, gradient)) => {
                                     self.history_index = self.history.len();
@@ -201,10 +186,10 @@ impl GuiControl {
                                 }
                             }
                         }
-                        if clickable_text(ui, "⮪").clicked() {
+                        if icon_button(ui, icons::LEFT).clicked() {
                             new_index = self.history_index.checked_sub(1);
                         }
-                        if clickable_text(ui, "⮫").clicked() {
+                        if icon_button(ui, icons::RIGHT).clicked() {
                             new_index = self.history_index.checked_add(1);
                         }
                     }

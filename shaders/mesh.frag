@@ -19,8 +19,8 @@ vec4 gradient_density(vec4 d, vec3 n);
 
 float worldPosLine(vec3 normal) {
     // do not draw lines for almost-parallel surfaces
-    bool x = abs(dot(normal, vec3(1.0, 0.0, 0.0))) > 0.99;
-    bool y = abs(dot(normal, vec3(0.0, 1.0, 0.0))) > 0.99;
+    bool x = abs(dot(normal, vec3(1.0, 0.0, 0.0))) > 0.97;
+    bool y = abs(dot(normal, vec3(0.0, 1.0, 0.0))) > 0.97;
 
     vec2 coord = inWorldPos.xy;
     // Compute anti-aliased world-space grid lines
