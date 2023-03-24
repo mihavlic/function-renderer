@@ -7,6 +7,7 @@ layout(push_constant, scalar) uniform PushConstant {
     vec3 rect_min;
     vec3 rect_max;
     float time;
+    int padding;
 } push;
 
 layout(location = 0) in vec3 inPosition;

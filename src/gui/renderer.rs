@@ -13,7 +13,7 @@ use graph::{
 };
 use pumice::{util::ObjectHandle, vk};
 use pumice_vma as vma;
-use slice_group_by::GroupBy;
+use slice_group_by::{GroupBy, GroupByMut};
 use std::{
     collections::{hash_map::Entry, HashMap},
     ffi::c_void,
@@ -34,6 +34,7 @@ pub struct PushConstants {
 
 struct TextureImage {
     image: object::Image,
+    is_rgba: bool,
     set: vk::DescriptorSet,
     view: vk::ImageView,
     options: egui::TextureOptions,
@@ -445,13 +446,19 @@ impl Renderer {
         struct ImageBlitRegion {
             offset: [i32; 2],
             extent: [u32; 2],
-            data: Vec<u8>,
+            data: egui::ImageData,
         }
-        let mut output_blits: Vec<(TextureId, Vec<ImageBlitRegion>)> = Vec::new();
+        let mut output_blits: Vec<(TextureId, bool, Vec<ImageBlitRegion>)> = Vec::new();
 
-        for image_blits in texture_deltas.binary_group_by_key(|d| d.0) {
+        for mut image_blits in texture_deltas.binary_group_by_key_mut(|d| d.0) {
             let texture_id = image_blits[0].0;
             let mut regions = Vec::new();
+            let mut image_is_rgba = None;
+
+            // if there are multiple full-texture-rewrites, discard all but the last one
+            if let Some(found_full) = image_blits.iter().rposition(|(_, blit)| blit.pos.is_none()) {
+                image_blits = &mut image_blits[found_full..];
+            }
 
             for (_, blit) in image_blits {
                 let width = blit.image.width() as u32;
@@ -461,33 +468,21 @@ impl Renderer {
                     continue;
                 }
 
-                let data = match &blit.image {
-                    egui::ImageData::Color(image) => {
-                        assert_eq!(
-                            width as usize * height as usize,
-                            image.pixels.len(),
-                            "Mismatch between texture size and texel count"
-                        );
+                assert_eq!(
+                    [width as usize, height as usize],
+                    blit.image.size(),
+                    "Mismatch between texture size and texel count"
+                );
 
-                        let slice = unsafe {
-                            // Color32 is repr(C) [u8; 4]
-                            // this makes it castable as a &[u8]
-                            std::slice::from_raw_parts(
-                                image.pixels.as_ptr().cast::<u8>(),
-                                image.width() * image.height() * 4,
-                            )
-                        };
-
-                        slice.to_vec()
-                    }
-                    egui::ImageData::Font(image) => {
-                        // hope that the codegen is decent
-                        image
-                            .srgba_pixels(None)
-                            .flat_map(|c| c.to_array())
-                            .collect()
-                    }
+                let is_rgba = match blit.image {
+                    egui::ImageData::Color(_) => true,
+                    egui::ImageData::Font(_) => false,
                 };
+
+                match image_is_rgba {
+                    Some(prev_is_rgba) => assert_eq!(prev_is_rgba, is_rgba),
+                    None => image_is_rgba = Some(is_rgba),
+                }
 
                 let entry = self.texture_images.entry(texture_id);
 
@@ -525,10 +520,12 @@ impl Renderer {
                     } else {
                         // we may get creation requests multiple times (at least for the font texture)
                         if let Entry::Occupied(mut v) = entry {
+                            let old = v.get();
                             let (old_width, old_height) =
-                                v.get().image.get_create_info().size.get_2d().unwrap();
+                                old.image.get_create_info().size.get_2d().unwrap();
 
-                            if width == old_width && height == old_height {
+                            if width == old_width && height == old_height && old.is_rgba == is_rgba
+                            {
                                 maybe_remake_set(v.get_mut());
                                 break 'handle_blit;
                             } else {
@@ -541,6 +538,12 @@ impl Renderer {
                             egui::TextureId::User(i) => ('U', i),
                         };
 
+                        let format = if is_rgba {
+                            vk::Format::R8G8B8A8_UNORM
+                        } else {
+                            vk::Format::R8_UNORM
+                        };
+
                         let image = device
                             .create_image(
                                 object::ImageCreateInfo {
@@ -549,7 +552,7 @@ impl Renderer {
                                     // we explicitly want a UNORM format
                                     // because we want the fragment shader to not
                                     // convert our colors to linear space
-                                    format: vk::Format::R8G8B8A8_UNORM,
+                                    format,
                                     samples: vk::SampleCountFlags::C1,
                                     mip_levels: 1,
                                     array_layers: 1,
@@ -569,13 +572,29 @@ impl Renderer {
                             )
                             .unwrap();
 
+                        let components = if is_rgba {
+                            vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::IDENTITY,
+                                g: vk::ComponentSwizzle::IDENTITY,
+                                b: vk::ComponentSwizzle::IDENTITY,
+                                a: vk::ComponentSwizzle::IDENTITY,
+                            }
+                        } else {
+                            vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::R,
+                                g: vk::ComponentSwizzle::R,
+                                b: vk::ComponentSwizzle::R,
+                                a: vk::ComponentSwizzle::R,
+                            }
+                        };
+
                         let sampler = Self::get_sampler(&mut self.samplers, blit.options, device);
                         let view = image
                             .get_view(
                                 &object::ImageViewCreateInfo {
                                     view_type: vk::ImageViewType::T2D,
-                                    format: vk::Format::R8G8B8A8_UNORM,
-                                    components: vk::ComponentMapping::default(),
+                                    format,
+                                    components,
                                     subresource_range: image.get_whole_subresource_range(),
                                 },
                                 GenerationId::NEVER,
@@ -587,6 +606,7 @@ impl Renderer {
 
                         let texture = TextureImage {
                             image,
+                            is_rgba,
                             set,
                             view,
                             options: blit.options,
@@ -602,13 +622,16 @@ impl Renderer {
                         .map(|[x, y]| [x as i32, y as i32])
                         .unwrap_or_default(),
                     extent: [width, height],
-                    data,
+                    data: std::mem::replace(
+                        &mut blit.image,
+                        egui::ImageData::Color(egui::ColorImage::default()),
+                    ),
                 };
 
                 regions.push(region);
             }
 
-            output_blits.push((texture_id, regions));
+            output_blits.push((texture_id, image_is_rgba.unwrap(), regions));
         }
 
         if output_blits.is_empty() {
@@ -617,7 +640,7 @@ impl Renderer {
 
         let submissions = device.write_multiple(|staging| {
             let mut submissions = SmallVec::new();
-            for (image, blits) in output_blits {
+            for (image, is_rgba, blits) in output_blits {
                 let image = self.texture_images.get(&image).unwrap();
                 // TODO create a better api that doesn't require a vector
                 let regions = blits
@@ -644,17 +667,38 @@ impl Renderer {
                     })
                     .collect();
 
+                let layout = if is_rgba {
+                    std::alloc::Layout::new::<Color32>()
+                } else {
+                    std::alloc::Layout::new::<u8>()
+                };
+
                 let wait_for = staging.write_image_in_cmd(
                     &image.image,
                     Some(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
-                    std::alloc::Layout::new::<Color32>(),
+                    layout,
                     regions,
                     cmd,
                     queue_family,
                     submission,
                     device,
-                    move |ptr, i, _| {
-                        ptr.copy_from_nonoverlapping(blits[i].data.as_ptr(), blits[i].data.len());
+                    move |ptr, i, _| match &blits[i].data {
+                        egui::ImageData::Color(image) => {
+                            ptr.copy_from_nonoverlapping(
+                                image.pixels.as_ptr().cast::<u8>(),
+                                image.width() * image.height() * 4,
+                            );
+                        }
+                        egui::ImageData::Font(image) => {
+                            let mut ptr = ptr;
+                            for coverage in image.pixels.iter() {
+                                let gamma = 0.55;
+                                let alpha = coverage.powf(gamma);
+                                let quantized = (alpha * 255.0 + 0.5).floor() as u8;
+                                *ptr = quantized;
+                                ptr = ptr.add(1);
+                            }
+                        }
                     },
                 );
                 submissions.extend(wait_for);
