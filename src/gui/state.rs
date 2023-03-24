@@ -1,10 +1,20 @@
-use crate::{hotreaload::AsyncEvent, parse::math_into_glsl, FrameData};
+use crate::{
+    hotreaload::AsyncEvent,
+    parse::{math_into_glsl, MAX_MARGIN, MIN_MARGIN},
+    FrameData,
+};
 use egui::{Color32, Layout, Ui, Widget};
 use glam::Vec3;
 use std::{
     any::TypeId,
     sync::{mpsc::Sender, Arc, Mutex},
 };
+
+fn clickable_text(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    egui::Label::new(egui::RichText::new(text).size(14.0))
+        .sense(egui::Sense::click())
+        .ui(ui)
+}
 
 trait FunctionIntervalControl: 'static {
     fn init(&mut self, min: Vec3, max: Vec3);
@@ -74,6 +84,9 @@ impl FunctionIntervalControl for CenterControl {
             ui.add(egui::DragValue::new(&mut self.center.x).speed(0.1));
             ui.add(egui::DragValue::new(&mut self.center.y).speed(0.1));
             ui.add(egui::DragValue::new(&mut self.center.z).speed(0.1));
+            if clickable_text(ui, "↺").clicked() {
+                self.center = Vec3::ZERO;
+            }
             ui.end_row();
 
             ui.label("half");
@@ -82,6 +95,7 @@ impl FunctionIntervalControl for CenterControl {
                     .speed(0.1)
                     .clamp_range(0.01..=f32::INFINITY),
             );
+            ui.end_row();
         });
     }
 
@@ -141,13 +155,37 @@ impl GuiControl {
         egui::Window::new("")
             .id(egui::Id::new("Control"))
             .fixed_pos((8.0, 8.0))
-            // .fixed_size((250.0, 0.0))
             .auto_sized()
             .title_bar(false)
             .show(ctx, |ui| {
+                let id = ui.make_persistent_id("window inner thing");
+                let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    id,
+                    true,
+                );
+
+                fn circle_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
+                    let stroke = ui.style().interact(&response).fg_stroke;
+                    let radius = egui::lerp(5.0..=8.0, openness);
+                    // ui.label(egui::RichText::new("⚙").color(stroke.color).size(7.0));
+                    ui.painter().text(
+                        response.rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "⚙",
+                        egui::FontId {
+                            size: 16.0,
+                            family: egui::FontFamily::Proportional,
+                        },
+                        stroke.color,
+                    );
+                }
+
                 let mut new_index = None;
-                ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
-                    ui.horizontal(|ui| {
+
+                ui.horizontal(|ui| {
+                    state.show_toggle_button(ui, circle_icon);
+                    if state.is_open() {
                         if ui.text_edit_singleline(&mut self.edit).lost_focus() {
                             match math_into_glsl(&self.edit) {
                                 Ok((density, gradient)) => {
@@ -163,73 +201,52 @@ impl GuiControl {
                                 }
                             }
                         }
-                        if ui.button("Prev").clicked() {
+                        if clickable_text(ui, "⮪").clicked() {
                             new_index = self.history_index.checked_sub(1);
                         }
-                        if ui.button("Next").clicked() {
+                        if clickable_text(ui, "⮫").clicked() {
                             new_index = self.history_index.checked_add(1);
                         }
-                    });
+                    }
+                });
 
-                    let id = ui.make_persistent_id("interval control collapse");
-                    egui::collapsing_header::CollapsingState::load_with_default_open(
-                        ui.ctx(),
-                        id,
-                        true,
-                    )
-                    .show_header(ui, |ui| {
-                        let mut id = self.control_id;
-                        ui.radio_value(&mut id, ControlKind::Center, "center");
-                        ui.radio_value(&mut id, ControlKind::Interval, "interval");
-                        ui.add_space(5.0);
-                        if egui::Label::new(egui::RichText::new("↺").size(14.0))
-                            .sense(egui::Sense::click())
-                            .ui(ui)
-                            .clicked()
-                        {
-                            self.control.init(Vec3::splat(-16.0), Vec3::splat(16.0));
-                        }
-                        if id != self.control_id {
-                            let mut new_control: Box<dyn FunctionIntervalControl> = match id {
-                                ControlKind::Center => Box::new(CenterControl::default()),
-                                ControlKind::Interval => Box::new(IntervalControl::default()),
-                            };
-                            let (min, max) = self.control.output();
-                            new_control.init(min, max);
-                            self.control = new_control;
-                            self.control_id = id;
-                        }
-                    })
-                    .body(|ui| {
+                state.show_body_unindented(ui, |ui| {
+                    ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
                         self.control.ui(ui);
                         let (min, max) = self.control.output();
                         let mut frame = self.frame.lock().unwrap();
-                        frame.rect_min = min;
-                        frame.rect_max = max;
+                        // don't ask me how this works
+                        let scale = (60.0 + MIN_MARGIN + MAX_MARGIN) / 60.0;
+                        let scale2 = MIN_MARGIN / (60.0 + MIN_MARGIN + MAX_MARGIN);
+                        let extent = max - min;
+                        let scaled_min = min - scale2 * extent;
+                        let scaled_max = scaled_min + scale * extent;
+                        frame.rect_min = scaled_min;
+                        frame.rect_max = scaled_max;
                     });
-                });
 
-                if let Some(new) = new_index {
-                    if let Some(f) = self.history.get(new) {
-                        self.edit = f.clone();
-                        self.history_index = new;
+                    if let Some(new) = new_index {
+                        if let Some(f) = self.history.get(new) {
+                            self.edit = f.clone();
+                            self.history_index = new;
 
-                        match math_into_glsl(&self.edit) {
-                            Ok((density, gradient)) => {
-                                self.sender
-                                    .send(AsyncEvent::NewFunction { density, gradient });
-                                self.error = None;
-                            }
-                            Err(e) => {
-                                self.error = Some(e.to_string());
+                            match math_into_glsl(&self.edit) {
+                                Ok((density, gradient)) => {
+                                    self.sender
+                                        .send(AsyncEvent::NewFunction { density, gradient });
+                                    self.error = None;
+                                }
+                                Err(e) => {
+                                    self.error = Some(e.to_string());
+                                }
                             }
                         }
                     }
-                }
 
-                if let Some(e) = self.error.as_ref() {
-                    ui.colored_label(Color32::RED, e);
-                }
+                    if let Some(e) = self.error.as_ref() {
+                        ui.colored_label(Color32::RED, e);
+                    }
+                });
             });
     }
 }

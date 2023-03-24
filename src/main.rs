@@ -94,7 +94,7 @@ fn main() {
         let mut compiler = GraphCompiler::new();
 
         let mut camera: CameraRig = CameraRig::builder()
-            .with(Position::new(Vec3::splat(29.7)))
+            .with(Position::new(Vec3::splat(31.5)))
             .with(YawPitchZUp::new().pitch_degrees(25.0).yaw_degrees(0.0))
             .with(Smooth::new_rotation(0.25))
             .with(Arm::new(Vec3::Z * 120.0))
@@ -116,15 +116,14 @@ fn main() {
             modules.event_sender(),
             frame_data.clone(),
             &[
-                "log(0.001 x)/log(y) - z",
                 "128/sqrt((x)(x) + (y)(y)) - z",
-                "8*sin(sqrt(x^2 + y^2) / 2pi) - z",
-                "|x| + |y| - z",
                 "sin(2sqrt(x^2+y^2+z^2)/pi)",
                 "2000/(x y) - z + 15",
                 "y - z",
                 "sin(x)",
                 "cos(abs(x)) + cos(abs(y)) + cos(abs(z)) - cos(x^2+y^2+z^2)",
+                "|x| + |y| - z",
+                "8*sin(sqrt(x^2 + y^2) / 2pi) - z",
             ],
         );
 
@@ -220,7 +219,9 @@ fn main() {
                             || size.height == 0)
                         {
                             let new_input = winit.take_egui_input(&window);
-                            let pixels_per_point = new_input.pixels_per_point.unwrap_or(1.0);
+                            let pixels_per_point = new_input
+                                .pixels_per_point
+                                .unwrap_or(winit.pixels_per_point());
                             context.begin_frame(new_input);
                             gui.ui(&context);
                             let output = context.end_frame();
@@ -624,8 +625,8 @@ unsafe fn make_graph(
                 let data = {
                     let state = state_copy.lock().unwrap();
                     FunctionData {
-                        rect_min: state.rect_min - MIN_MARGIN,
-                        rect_max: state.rect_max + MAX_MARGIN,
+                        rect_min: state.rect_min,
+                        rect_max: state.rect_max,
                         time: state.time,
                     }
                 };

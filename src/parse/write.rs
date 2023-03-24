@@ -42,6 +42,9 @@ pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
     let min_margin =  MIN_MARGIN / 63.0;
     let max_margin = 1.0 - MAX_MARGIN / 63.0;
 
+    // let min_margin = -100.0;
+    // let max_margin = 100.0;
+
     let last = tape.process_ast(&density);
 
     let density = {

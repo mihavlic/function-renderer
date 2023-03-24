@@ -272,8 +272,8 @@ impl RenderPass for CreatedMeshPass {
             PushConstants {
                 model_matrix: world_to_view,
                 projection_matrix: perspective,
-                rect_min: state.rect_min - MIN_MARGIN,
-                rect_max: state.rect_max + MAX_MARGIN,
+                rect_min: state.rect_min,
+                rect_max: state.rect_max,
                 time: state.time,
             }
         };
