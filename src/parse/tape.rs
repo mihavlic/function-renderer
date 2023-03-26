@@ -6,7 +6,7 @@ use std::{
 
 use graph::{device::LazyDisplay, storage::DefaultAhashMap};
 
-use super::{BinaryOperation, BuiltingVariable, Constant, UnaryOperation};
+use super::{BinaryOperation, BuiltingVariable, Constant, TernaryOperation, UnaryOperation};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SsaIndex(u32);
@@ -21,8 +21,15 @@ impl Display for SsaIndex {
     }
 }
 
+struct SsaIndexDerivative(SsaIndex);
+impl Display for SsaIndexDerivative {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}d", self.0)
+    }
+}
+
 #[derive(Clone, Copy)]
-pub struct TotalF32(f32);
+pub struct TotalF32(pub f32);
 impl PartialEq for TotalF32 {
     fn eq(&self, other: &Self) -> bool {
         self.0.to_bits() == other.0.to_bits()
@@ -37,6 +44,12 @@ impl Hash for TotalF32 {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum SsaExpression {
+    Ternary {
+        op: TernaryOperation,
+        a: SsaIndex,
+        b: SsaIndex,
+        c: SsaIndex,
+    },
     Binary {
         op: BinaryOperation,
         left: SsaIndex,
@@ -69,13 +82,35 @@ impl Tape {
     pub fn mark_used(&mut self, index: SsaIndex) {
         self.tape[index.0 as usize].1 = true;
     }
-    pub fn process_ast(&mut self, exppression: &super::Expression) -> SsaIndex {
+    pub fn add_ast(&mut self, exppression: &super::Expression) -> SsaIndex {
         let index = self.process_ast_impl(exppression);
         self.mark_used(index);
         index
     }
     fn process_ast_impl(&mut self, exppression: &super::Expression) -> SsaIndex {
         let ssa = match exppression {
+            super::Expression::Ternary { op, a, b, c } => {
+                let mut op = *op;
+
+                let mut a = self.process_ast_impl(a);
+                let mut b = self.process_ast_impl(b);
+                let mut c = self.process_ast_impl(c);
+
+                let a_value = self.get_constant_value(a);
+                let b_value = self.get_constant_value(b);
+                let c_value = self.get_constant_value(c);
+
+                'make_expr: {
+                    if let (Some(a), Some(b), Some(c)) = (a_value, b_value, c_value) {
+                        let v = TernaryOperation::eval(op, a, b, c);
+                        SsaExpression::Constant(TotalF32(v))
+                    } else {
+                        match op {
+                            TernaryOperation::Select => SsaExpression::Ternary { op, a, b, c },
+                        }
+                    }
+                }
+            }
             super::Expression::Binary { op, left, right } => {
                 let mut op = *op;
 
@@ -158,7 +193,18 @@ impl Tape {
             super::Expression::Variable(_) => todo!(),
             super::Expression::Number(v) => SsaExpression::Constant(TotalF32(*v)),
         };
-        self.add(ssa)
+        self.add_internal(ssa)
+    }
+    fn add_internal(&mut self, expression: SsaExpression) -> SsaIndex {
+        let Self { tape, expressions } = self;
+
+        *expressions
+            .entry(expression.clone())
+            .or_insert_with(move || {
+                let index = SsaIndex::from_usize(tape.len());
+                tape.push((expression, false));
+                index
+            })
     }
     pub fn add(&mut self, expression: SsaExpression) -> SsaIndex {
         let Self { tape, expressions } = self;
@@ -167,7 +213,7 @@ impl Tape {
             .entry(expression.clone())
             .or_insert_with(move || {
                 let index = SsaIndex::from_usize(tape.len());
-                tape.push((expression, false));
+                tape.push((expression, true));
                 index
             })
     }
@@ -181,7 +227,7 @@ impl Tape {
     }
     pub fn write_glsl_into(&self, out: &mut String, differentiate: bool) {
         for (i, (s, used)) in self.tape.iter().enumerate() {
-            if *used == false && !differentiate && i != (self.tape.len() - 1) {
+            if *used == false {
                 continue;
             }
 
@@ -189,6 +235,9 @@ impl Tape {
 
             use std::fmt::Write;
             let value = LazyDisplay(|f| match *s {
+                SsaExpression::Ternary { op, a, b, c } => match op {
+                    TernaryOperation::Select => write!(f, "({a} > 0.0) ? {b} : {c}"),
+                },
                 SsaExpression::Binary {
                     op,
                     left: a,
@@ -227,15 +276,25 @@ impl Tape {
                 SsaExpression::Builtin(_) => panic!(),
             });
             let differentiation = LazyDisplay(|f: &mut std::fmt::Formatter| {
-                let dout = format!("{o}d");
+                let dout = SsaIndexDerivative(o);
                 match *s {
+                    SsaExpression::Ternary { op, a, b, c } => {
+                        let da = SsaIndexDerivative(a);
+                        let db = SsaIndexDerivative(b);
+                        let dc = SsaIndexDerivative(c);
+                        match op {
+                            TernaryOperation::Select => {
+                                write!(f, "vec3 {dout} = ({a} > 0.0) ? {db} : {dc}")
+                            }
+                        }
+                    }
                     SsaExpression::Binary {
                         op,
                         left: a,
                         right: b,
                     } => {
-                        let da = format!("{a}d");
-                        let db = format!("{b}d");
+                        let da = SsaIndexDerivative(a);
+                        let db = SsaIndexDerivative(b);
                         match op {
                             BinaryOperation::Sub => write!(f, "vec3 {dout} = {da} - {db}"),
                             BinaryOperation::Add => write!(f, "vec3 {dout} = {da} + {db}"),
@@ -262,7 +321,7 @@ impl Tape {
                         }
                     }
                     SsaExpression::Unary { op, child: a } => {
-                        let da = format!("{a}d");
+                        let da = SsaIndexDerivative(a);
                         use std::f32::consts::{LN_10, LN_2};
                         match op {
                             UnaryOperation::Neg => write!(f, "vec3 {dout} = -{da}"),
