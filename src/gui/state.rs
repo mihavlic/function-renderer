@@ -14,11 +14,13 @@ use std::{
 use super::icons;
 
 fn icon_button(ui: &mut egui::Ui, icon: char) -> egui::Response {
-    egui::Label::new(
-        egui::RichText::new(icon).font(egui::FontId::new(12.5, egui_icon_font_family())),
-    )
-    .sense(egui::Sense::click())
-    .ui(ui)
+    egui::Label::new(icon_text(icon, 12.5))
+        .sense(egui::Sense::click())
+        .ui(ui)
+}
+
+fn icon_text(icon: char, size: f32) -> egui::RichText {
+    egui::RichText::new(icon).font(egui::FontId::new(size, egui_icon_font_family()))
 }
 
 trait FunctionIntervalControl: 'static {
@@ -43,25 +45,26 @@ impl FunctionIntervalControl for CenterControl {
     fn ui(&mut self, ui: &mut Ui) {
         egui::Grid::new("center grid")
             .min_col_width(0.0)
-            .spacing((5.5, 3.0))
+            // .spacing((5.5, 3.0))
             .show(ui, |ui| {
                 ui.label("pos");
-                ui.add(egui::DragValue::new(&mut self.center.x).speed(0.1));
-                ui.add(egui::DragValue::new(&mut self.center.y).speed(0.1));
-                ui.add(egui::DragValue::new(&mut self.center.z).speed(0.1));
-                ui.add_space(180.0 - ui.cursor().left());
+                egui::DragValue::new(&mut self.center.x).speed(0.1).ui(ui);
+                egui::DragValue::new(&mut self.center.y).speed(0.1).ui(ui);
+                egui::DragValue::new(&mut self.center.z).speed(0.1).ui(ui);
                 if icon_button(ui, icons::CCW).clicked() {
                     self.center = Vec3::ZERO;
                 }
                 ui.end_row();
 
                 ui.label("half");
-                ui.add(
-                    egui::DragValue::new(&mut self.half)
-                        .speed(0.1)
-                        .clamp_range(0.01..=f32::INFINITY),
-                );
-                ui.add_space(180.0 - ui.cursor().left());
+                egui::DragValue::new(&mut self.half)
+                    .speed(0.1)
+                    .clamp_range(0.01..=f32::INFINITY)
+                    .ui(ui);
+
+                ui.allocate_space(egui::Vec2::ZERO);
+                ui.allocate_space(egui::Vec2::ZERO);
+
                 if icon_button(ui, icons::CCW).clicked() {
                     self.half = 16.0;
                 }
@@ -89,6 +92,8 @@ pub struct GuiControl {
     frame: Arc<Mutex<FrameData>>,
     control: Box<dyn FunctionIntervalControl>,
     control_id: ControlKind,
+
+    open_settings: bool,
 }
 
 impl GuiControl {
@@ -123,113 +128,132 @@ impl GuiControl {
                 half: 16.0,
             }),
             control_id: ControlKind::Center,
+            open_settings: false,
         }
     }
     pub fn ui(&mut self, ctx: &egui::Context) {
-        egui::Window::new("")
-            .id(egui::Id::new("Control"))
-            .fixed_pos((8.0, 8.0))
-            .frame(egui::containers::Frame {
-                stroke: egui::Stroke::NONE,
-                shadow: egui::epaint::Shadow {
-                    extrusion: 8.0,
-                    color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 50),
+        fn gear_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
+            let stroke = ui.style().interact(&response).fg_stroke;
+            ui.painter().text(
+                response.rect.center(),
+                egui::Align2::CENTER_CENTER,
+                super::icons::COG,
+                egui::FontId {
+                    size: 15.0,
+                    family: egui_icon_font_family(),
                 },
-                ..egui::Frame::window(&ctx.style())
-            })
-            .auto_sized()
-            .title_bar(false)
-            .show(ctx, |ui| {
-                let id = ui.make_persistent_id("window inner thing");
-                let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-                    ui.ctx(),
-                    id,
-                    true,
-                );
+                stroke.color,
+            );
+        }
 
-                fn circle_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
-                    let stroke = ui.style().interact(&response).fg_stroke;
-                    ui.painter().text(
-                        response.rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        super::icons::COG,
-                        egui::FontId {
-                            size: 15.0,
-                            family: egui_icon_font_family(),
-                        },
-                        stroke.color,
-                    );
-                }
-
-                let mut new_index = None;
-
+        let mut new_index = None;
+        egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "title bar").show_animated(
+            ctx,
+            true,
+            |ui| {
                 ui.horizontal(|ui| {
-                    state.show_toggle_button(ui, circle_icon);
-                    if state.is_open() {
-                        if egui::TextEdit::singleline(&mut self.edit)
-                            .font(egui::TextStyle::Monospace)
-                            .show(ui)
-                            .response
-                            .lost_focus()
-                        {
-                            match parse_math(&self.edit) {
-                                Ok(_) => {
-                                    self.history_index = self.history.len();
-                                    self.history.push(self.edit.clone());
+                    if egui::Label::new(icon_text(icons::COG, 12.5))
+                        .sense(egui::Sense::click())
+                        .ui(ui)
+                        .clicked()
+                    {
+                        self.open_settings ^= true;
+                    }
 
-                                    self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
-                                    self.error = None;
-                                }
-                                Err(e) => {
-                                    self.error = Some(e.to_string());
-                                }
+                    if egui::TextEdit::singleline(&mut self.edit)
+                        .font(egui::TextStyle::Monospace)
+                        .show(ui)
+                        .response
+                        .lost_focus()
+                    {
+                        match parse_math(&self.edit) {
+                            Ok(_) => {
+                                self.history_index = self.history.len();
+                                self.history.push(self.edit.clone());
+
+                                self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
+                                self.error = None;
+                            }
+                            Err(e) => {
+                                self.error = Some(e.to_string());
                             }
                         }
-                        if icon_button(ui, icons::LEFT).clicked() {
-                            new_index = self.history_index.checked_sub(1);
-                        }
-                        if icon_button(ui, icons::RIGHT).clicked() {
-                            new_index = self.history_index.checked_add(1);
-                        }
+                    }
+                    if icon_button(ui, icons::LEFT).clicked() {
+                        new_index = self.history_index.checked_sub(1);
+                    }
+                    if icon_button(ui, icons::RIGHT).clicked() {
+                        new_index = self.history_index.checked_add(1);
                     }
                 });
+            },
+        );
 
-                state.show_body_unindented(ui, |ui| {
-                    ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
-                        self.control.ui(ui);
-                        let (min, max) = self.control.output();
-                        let mut frame = self.frame.lock().unwrap();
-                        // don't ask me how this works
-                        let scale = (60.0 + MIN_MARGIN + MAX_MARGIN) / 60.0;
-                        let scale2 = MIN_MARGIN / (60.0 + MIN_MARGIN + MAX_MARGIN);
-                        let extent = max - min;
-                        let scaled_min = min - scale2 * extent;
-                        let scaled_max = scaled_min + scale * extent;
-                        frame.rect_min = scaled_min;
-                        frame.rect_max = scaled_max;
+        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ctx,
+            egui::Id::new("settings_popup"),
+            true,
+        );
+        state.set_open(self.open_settings);
+        let openness = state.openness(ctx);
+
+        let frame = egui::containers::Frame {
+            stroke: egui::Stroke::NONE,
+            shadow: egui::epaint::Shadow {
+                extrusion: 8.0,
+                color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 50),
+            },
+            ..egui::Frame::window(&ctx.style())
+        }
+        .multiply_with_opacity(state.openness(ctx));
+
+        if state.openness(ctx) > 0.01 {
+            egui::Window::new("")
+                .id(egui::Id::new("settings"))
+                .anchor(egui::Align2::LEFT_TOP, (4.0, 4.0))
+                .auto_sized()
+                .title_bar(false)
+                .frame(frame)
+                .open(&mut self.open_settings)
+                .show(ctx, |ui| {
+                    state.show_body_unindented(ui, |ui| {
+                        ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
+                            self.control.ui(ui);
+                        });
+
+                        if let Some(e) = self.error.as_ref() {
+                            ui.colored_label(Color32::RED, e);
+                        }
                     });
-
-                    if let Some(new) = new_index {
-                        if let Some(f) = self.history.get(new) {
-                            self.edit = f.clone();
-                            self.history_index = new;
-
-                            match parse_math(&self.edit) {
-                                Ok(_) => {
-                                    self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
-                                    self.error = None;
-                                }
-                                Err(e) => {
-                                    self.error = Some(e.to_string());
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(e) = self.error.as_ref() {
-                        ui.colored_label(Color32::RED, e);
-                    }
                 });
-            });
+        }
+
+        if let Some(new) = new_index {
+            if let Some(f) = self.history.get(new) {
+                self.edit = f.clone();
+                self.history_index = new;
+
+                match parse_math(&self.edit) {
+                    Ok(_) => {
+                        self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.error = Some(e.to_string());
+                    }
+                }
+            }
+        }
+
+        let (min, max) = self.control.output();
+        let mut frame = self.frame.lock().unwrap();
+        // don't ask me how this works
+        let scale = (60.0 + MIN_MARGIN + MAX_MARGIN) / 60.0;
+        let scale2 = MIN_MARGIN / (60.0 + MIN_MARGIN + MAX_MARGIN);
+        let extent = max - min;
+        let scaled_min = min - scale2 * extent;
+        let scaled_max = scaled_min + scale * extent;
+        frame.rect_min = scaled_min;
+        frame.rect_max = scaled_max;
     }
 }
