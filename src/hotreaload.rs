@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::{io, slice};
 
-use crate::parse::{math_into_glsl, GlslCompiler};
+use crate::parse::{math_into_glsl, parse_math, GlslCompiler};
 use graph::device::debug::LazyDisplay;
 use graph::device::reflection::ReflectedLayout;
 use graph::device::{self, read_spirv, DeviceCreateInfo, QueueFamilySelection};
@@ -223,8 +223,10 @@ impl ShaderModules {
             match self.receiver.try_recv() {
                 Ok(event) => match event {
                     AsyncEvent::FilesChanged(changed) => files.extend(changed),
-                    AsyncEvent::NewFunction { density, gradient } => {
-                        new_density_functions = Some((density, gradient))
+                    AsyncEvent::NewFunction(expr) => {
+                        let new_functions = math_into_glsl(&expr)
+                            .expect("Expressions should be verified before being sent");
+                        new_density_functions = Some(new_functions)
                     }
                     AsyncEvent::Exit => return PollResult::Exit,
                 },
@@ -359,12 +361,12 @@ impl ShaderModules {
     }
 }
 
-fn send_fun(line: &str, sender: &Sender<AsyncEvent>) -> bool {
-    match math_into_glsl(line) {
-        Ok((density, gradient)) => {
+fn send_fun(expr: &str, sender: &Sender<AsyncEvent>) -> bool {
+    match parse_math(expr) {
+        Ok(_) => {
             // send the valid function to be used for graphing
             // if the main thread exit, we'll exit too
-            match sender.send(AsyncEvent::NewFunction { density, gradient }) {
+            match sender.send(AsyncEvent::NewFunction(expr.to_owned())) {
                 Ok(_) => false,
                 Err(_) => true,
             }
@@ -381,7 +383,7 @@ fn send_fun(line: &str, sender: &Sender<AsyncEvent>) -> bool {
 
 pub enum AsyncEvent {
     FilesChanged(Vec<PathBuf>),
-    NewFunction { density: String, gradient: String },
+    NewFunction(String),
     Exit,
 }
 

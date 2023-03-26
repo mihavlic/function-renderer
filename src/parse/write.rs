@@ -1,6 +1,5 @@
 use crate::parse::{
-    self, debug_ast, parse_expr, BinaryOperation, BuiltingVariable, Expression, Parser,
-    SsaExpression, Tape,
+    self, debug_ast, BinaryOperation, BuiltingVariable, Expression, SsaExpression, Tape,
 };
 use graph::device::read_spirv;
 use pumice::vk;
@@ -15,7 +14,7 @@ use std::{
     str::FromStr,
 };
 
-use super::{parser, ParserError, TotalF32, UnaryOperation};
+use super::{parse_math, parser, ParserError, TotalF32, UnaryOperation};
 
 pub const MIN_MARGIN: f32 = 0.5;
 pub const MAX_MARGIN: f32 = 2.5;
@@ -38,8 +37,7 @@ pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
     let max_margin = 1.0 - MAX_MARGIN / 63.0;
 
     let density = {
-        let mut parser = Parser::new(expr)?;
-        let expr = parse_expr(&mut parser, u8::MAX).unwrap();
+        let expr = parse_math(expr)?;
         tape.add_ast(&expr)
     };
 
@@ -53,8 +51,7 @@ pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
                 max({min_margin} - z_normalized, z_normalized - {max_margin})
             )
         ");
-        let mut parser = Parser::new(&expr)?;
-        let expr = parse_expr(&mut parser, u8::MAX).unwrap();
+        let expr = parse_math(&expr).unwrap();
         tape.add_ast(&expr)
     };
 

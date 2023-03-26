@@ -1,7 +1,7 @@
 use crate::{
     gui::egui_icon_font_family,
     hotreaload::AsyncEvent,
-    parse::{math_into_glsl, MAX_MARGIN, MIN_MARGIN},
+    parse::{math_into_glsl, parse_math, MAX_MARGIN, MIN_MARGIN},
     FrameData,
 };
 use egui::{Color32, Layout, Ui, Widget};
@@ -98,9 +98,13 @@ impl GuiControl {
         initial_history: &[&str],
     ) -> Self {
         if let Some(last) = initial_history.last() {
-            let (density, gradient) =
-                math_into_glsl(last).unwrap_or_else(|_| math_into_glsl("-1.0").unwrap());
-            sender.send(AsyncEvent::NewFunction { density, gradient });
+            let expr = if parse_math(last).is_ok() {
+                last
+            } else {
+                "-1.0"
+            };
+
+            sender.send(AsyncEvent::NewFunction(expr.to_owned()));
         }
 
         Self {
@@ -172,13 +176,12 @@ impl GuiControl {
                             .response
                             .lost_focus()
                         {
-                            match math_into_glsl(&self.edit) {
-                                Ok((density, gradient)) => {
+                            match parse_math(&self.edit) {
+                                Ok(_) => {
                                     self.history_index = self.history.len();
                                     self.history.push(self.edit.clone());
 
-                                    self.sender
-                                        .send(AsyncEvent::NewFunction { density, gradient });
+                                    self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
                                     self.error = None;
                                 }
                                 Err(e) => {
@@ -215,10 +218,9 @@ impl GuiControl {
                             self.edit = f.clone();
                             self.history_index = new;
 
-                            match math_into_glsl(&self.edit) {
-                                Ok((density, gradient)) => {
-                                    self.sender
-                                        .send(AsyncEvent::NewFunction { density, gradient });
+                            match parse_math(&self.edit) {
+                                Ok(_) => {
+                                    self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
                                     self.error = None;
                                 }
                                 Err(e) => {

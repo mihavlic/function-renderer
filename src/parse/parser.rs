@@ -40,7 +40,7 @@ impl TernaryOperation {
             }
         }
     }
-    pub fn try_function_str(str: &str) -> Option<Self> {
+    fn try_function_str(str: &str) -> Option<Self> {
         match str {
             "select" => Some(Self::Select),
             _ => None,
@@ -86,14 +86,14 @@ impl BinaryOperation {
             BinaryOperation::Max => a.min(b),
         }
     }
-    pub fn try_function_str(str: &str) -> Option<Self> {
+    fn try_function_str(str: &str) -> Option<Self> {
         match str {
             "min" => Some(Self::Min),
             "max" => Some(Self::Max),
             _ => None,
         }
     }
-    pub fn try_from_token(token: &Token) -> Option<(Self, u8)> {
+    fn try_from_token(token: &Token) -> Option<(Self, u8)> {
         let (precedence, token) = match token {
             Token::Sub => (4, BinaryOperation::Sub),
             Token::Add => (4, BinaryOperation::Add),
@@ -165,7 +165,7 @@ impl UnaryOperation {
             UnaryOperation::ArcCotan => std::f32::consts::FRAC_2_PI - a.atan(),
         }
     }
-    pub fn try_function_str(str: &str) -> Option<Self> {
+    fn try_function_str(str: &str) -> Option<Self> {
         match str {
             "arccos" => Some(Self::ArcCos),
             "arccotan" => Some(Self::ArcCotan),
@@ -269,7 +269,7 @@ pub enum Expression {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Token<'a> {
+enum Token<'a> {
     Sub,
     Add,
     Mul,
@@ -291,7 +291,7 @@ pub enum Token<'a> {
 }
 
 // "inspired" by https://github.com/gfx-rs/naga/blob/48e79388b506535d668df4f6c7be4e681812ab81/src/front/wgsl/lexer.rs#L8
-pub fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
+fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
     let mut chars = str.chars();
     loop {
         str = chars.as_str();
@@ -351,12 +351,12 @@ pub fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
     }
 }
 
-pub fn consume_any(input: &str, what: impl Fn(char) -> bool) -> (&str, &str) {
+fn consume_any(input: &str, what: impl Fn(char) -> bool) -> (&str, &str) {
     let pos = input.find(|c| !what(c)).unwrap_or(input.len());
     input.split_at(pos)
 }
 
-pub fn consume_number(str: &str) -> Result<(f32, &str)> {
+fn consume_number(str: &str) -> Result<(f32, &str)> {
     #[derive(PartialEq, Eq)]
     pub enum State {
         Start,
@@ -403,16 +403,16 @@ pub fn consume_number(str: &str) -> Result<(f32, &str)> {
 }
 
 /// Returns whether or not a char is a blankspace (Unicode Pattern_White_Space)
-pub fn is_blankspace(c: char) -> bool {
+fn is_blankspace(c: char) -> bool {
     c.is_whitespace()
 }
 
 /// Returns whether or not a char is a word part (Unicode XID_Continue)
-pub fn is_identifier(c: char) -> bool {
+fn is_identifier(c: char) -> bool {
     c == '_' || c.is_alphabetic()
 }
 
-pub fn operator_precedence(token: Token) -> Option<u8> {
+fn operator_precedence(token: Token) -> Option<u8> {
     Some(match token {
         Token::Sub => 4,
         Token::Add => 4,
@@ -424,7 +424,7 @@ pub fn operator_precedence(token: Token) -> Option<u8> {
     })
 }
 
-pub struct Parser<'a> {
+struct Parser<'a> {
     tokens: VecDeque<Token<'a>>,
 }
 
@@ -441,13 +441,13 @@ impl<'a> Parser<'a> {
         }
         Ok(Self { tokens })
     }
-    pub fn peek(&self) -> Token {
+    fn peek(&self) -> Token {
         self.tokens.front().cloned().unwrap_or(Token::End)
     }
-    pub fn next(&mut self) -> Token {
+    fn next(&mut self) -> Token {
         self.tokens.pop_front().unwrap_or(Token::End)
     }
-    pub fn ensure_token(&mut self, tok: &Token) -> Result<()> {
+    fn ensure_token(&mut self, tok: &Token) -> Result<()> {
         let d = std::mem::discriminant::<Token>(tok);
         let next = self.next();
         let dn = std::mem::discriminant::<Token>(&next);
@@ -460,7 +460,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
+fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
     let boxed_expr;
     let mut implicit_mul_eligible = false;
 
@@ -552,7 +552,7 @@ pub fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
     }
 }
 
-pub fn parse_expr(parser: &mut Parser, precedence: u8) -> Result<Box<Expression>> {
+fn parse_expr(parser: &mut Parser, precedence: u8) -> Result<Box<Expression>> {
     let mut left = parse_monoop(parser)?;
 
     loop {
@@ -620,4 +620,9 @@ pub fn debug_ast(node: &Expression) {
             eprint!("${var}");
         }
     }
+}
+
+pub fn parse_math(expr: &str) -> Result<Box<Expression>> {
+    let mut parser = Parser::new(expr)?;
+    parse_expr(&mut parser, u8::MAX)
 }
