@@ -19,6 +19,7 @@ use graph::graph::compile::{GraphCompiler, ImageKindCreateInfo};
 use graph::graph::descriptors::{DescBuffer, DescImage, DescSetBuilder, DescriptorData};
 use graph::graph::execute::{CompiledGraph, GraphExecutor, GraphRunConfig, GraphRunStatus};
 use graph::graph::task::{UnsafeSend, UnsafeSendSync};
+use graph::graph::GraphImage;
 use graph::instance::{Instance, InstanceCreateInfo};
 use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
@@ -41,10 +42,11 @@ use winit::platform::wayland::WindowBuilderExtWayland;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
 
+use crate::gui::{PaintConfig, RendererConfig};
 use crate::parse::{MAX_MARGIN, MIN_MARGIN};
 use crate::passes::{LambdaPass, MeshPass};
 
-pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
+pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C8;
 
 pub struct FrameData {
     camera: Transform<RightHanded>,
@@ -568,26 +570,47 @@ unsafe fn make_graph(
     let egui_pass = cache
         .borrow_mut()
         .compute_located(args!(), args!(), || {
+            let config = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
+                RendererConfig {
+                    output_attachment_is_unorm_nonlinear: true,
+                    format: vk::Format::B8G8R8A8_UNORM,
+                    samples: MSAA_SAMPLE_COUNT,
+                    color_load_op: vk::AttachmentLoadOp::LOAD,
+                    color_store_op: vk::AttachmentStoreOp::STORE,
+                    color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                    color_src_stages: vk::PipelineStageFlags::empty(),
+                    color_src_access: vk::AccessFlags::empty(),
+                    color_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                    resolve_enable: false,
+                    resolve_load_op: Default::default(),
+                    resolve_store_op: Default::default(),
+                    resolve_src_layout: Default::default(),
+                    resolve_src_stages: Default::default(),
+                    resolve_src_access: Default::default(),
+                    resolve_final_layout: Default::default(),
+                }
+            } else {
+                RendererConfig {
+                    output_attachment_is_unorm_nonlinear: true,
+                    format: vk::Format::B8G8R8A8_UNORM,
+                    samples: MSAA_SAMPLE_COUNT,
+                    color_load_op: vk::AttachmentLoadOp::LOAD,
+                    color_store_op: vk::AttachmentStoreOp::DONT_CARE,
+                    color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                    color_src_stages: vk::PipelineStageFlags::empty(),
+                    color_src_access: vk::AccessFlags::empty(),
+                    color_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                    resolve_enable: true,
+                    resolve_load_op: vk::AttachmentLoadOp::DONT_CARE,
+                    resolve_store_op: vk::AttachmentStoreOp::STORE,
+                    resolve_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                    resolve_src_stages: vk::PipelineStageFlags::empty(),
+                    resolve_src_access: vk::AccessFlags::empty(),
+                    resolve_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                }
+            };
             Arc::new(Mutex::new(UnsafeSendSync::new(
-                gui::Renderer::new_with_render_pass(
-                    true,
-                    vk::Format::B8G8R8A8_UNORM,
-                    MSAA_SAMPLE_COUNT,
-                    vk::AttachmentLoadOp::LOAD,
-                    vk::AttachmentStoreOp::STORE,
-                    vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                    vk::PipelineStageFlags::empty(),
-                    vk::AccessFlags::empty(),
-                    vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                    device,
-                ),
+                gui::Renderer::new_with_render_pass(&config, device),
             )))
         })
         .into_inner();
@@ -715,27 +738,33 @@ unsafe fn make_graph(
                 ..Default::default()
             },
         );
-        let color = b.create_image(
-            object::ImageCreateInfo {
-                flags: vk::ImageCreateFlags::empty(),
-                size: object::Extent::D2(swapchain_size.width, swapchain_size.height),
-                format: vk::Format::B8G8R8A8_UNORM,
-                samples: MSAA_SAMPLE_COUNT,
-                mip_levels: 1,
-                array_layers: 1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-                sharing_mode_concurrent: false,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                label: Some("color".into()),
-            },
-            vma::AllocationCreateInfo {
-                flags: vma::AllocationCreateFlags::empty(),
-                usage: vma::MemoryUsage::Unknown,
-                required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                ..Default::default()
-            },
-        );
+        let color = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
+            None
+        } else {
+            let color = b.create_image(
+                object::ImageCreateInfo {
+                    flags: vk::ImageCreateFlags::empty(),
+                    size: object::Extent::D2(swapchain_size.width, swapchain_size.height),
+                    format: vk::Format::B8G8R8A8_UNORM,
+                    samples: MSAA_SAMPLE_COUNT,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    tiling: vk::ImageTiling::OPTIMAL,
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    sharing_mode_concurrent: false,
+                    initial_layout: vk::ImageLayout::UNDEFINED,
+                    label: Some("color".into()),
+                },
+                vma::AllocationCreateInfo {
+                    flags: vma::AllocationCreateFlags::empty(),
+                    usage: vma::MemoryUsage::Unknown,
+                    required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                    ..Default::default()
+                },
+            );
+            Some(color)
+        };
 
         let draw_parameter_buffer = b.create_buffer(
             object::BufferCreateInfo {
@@ -1001,7 +1030,7 @@ unsafe fn make_graph(
         let (attachments, resolve_attachments) = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
             (vec![swapchain_image], vec![])
         } else {
-            (vec![color], vec![swapchain_image])
+            (vec![color.unwrap()], vec![/* swapchain_image */])
         };
 
         b.add_pass(
@@ -1031,38 +1060,95 @@ unsafe fn make_graph(
                         vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                         None,
                     );
+                    if MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1 {
+                        builder.use_image(
+                            color.unwrap(),
+                            vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                            vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
+                            vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
+                            vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                            None,
+                        );
+                    }
                 },
                 move |e, d| {
-                    let color_view = e.get_default_image_view(swapchain_image);
-                    let (color_usage, color_format) = match e.get_image_create_info(swapchain_image)
-                    {
-                        ImageKindCreateInfo::ImageRef(i) => (i.usage, i.format),
-                        ImageKindCreateInfo::Image(i) => (i.usage, i.format),
-                        ImageKindCreateInfo::Swapchain(i) => (i.usage, i.format),
-                    };
-                    let (width, height) = e.get_image_extent(swapchain_image).get_2d().unwrap();
+                    let get_image_info = |image: GraphImage| {
+                        let view = e.get_default_image_view(image);
+                        let (create_flags, usage, format) = match e.get_image_create_info(image) {
+                            ImageKindCreateInfo::ImageRef(i) => (Some(i.flags), i.usage, i.format),
+                            ImageKindCreateInfo::Image(i) => (Some(i.flags), i.usage, i.format),
+                            ImageKindCreateInfo::Swapchain(i) => (None, i.usage, i.format),
+                        };
+                        let (width, height) = e.get_image_extent(image).get_2d().unwrap();
 
+                        (view, create_flags, usage, format, width, height)
+                    };
+
+                    let (
+                        swapchain_view,
+                        swapchain_flags,
+                        swapchain_usage,
+                        swapchain_format,
+                        swapchain_width,
+                        swapchain_height,
+                    ) = get_image_info(swapchain_image);
+                    let formats = &[swapchain_format];
                     let mut data = state.lock().unwrap();
 
-                    let copy_submissions = egui_pass.lock().unwrap().paint(
-                        e.command_buffer(),
-                        e.get_current_queue().family(),
-                        e.get_current_submission(),
-                        color_view,
-                        vk::ImageCreateFlags::empty(),
-                        color_usage,
-                        &[color_format],
-                        Default::default(),
-                        Default::default(),
-                        Default::default(),
-                        Default::default(),
-                        None,
-                        data.pixels_per_point,
-                        &data.primitives,
-                        &data.textures_delta,
-                        [width, height],
-                        d,
-                    );
+                    let config = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
+                        PaintConfig {
+                            command_buffer: e.command_buffer(),
+                            queue_family: e.get_current_queue().family(),
+                            submission: e.get_current_submission(),
+                            color_view: swapchain_view,
+                            color_flags: swapchain_flags.unwrap_or_default(),
+                            color_usage: swapchain_usage,
+                            color_view_formats: formats,
+                            resolve_view: Default::default(),
+                            resolve_flags: Default::default(),
+                            resolve_usage: Default::default(),
+                            resolve_view_formats: Default::default(),
+                            clear: None,
+                            pixels_per_point: data.pixels_per_point,
+                            primitives: &data.primitives,
+                            textures_delta: &data.textures_delta,
+                            size: [swapchain_width, swapchain_height],
+                        }
+                    } else {
+                        let (
+                            color_view,
+                            color_flags,
+                            color_usage,
+                            color_format,
+                            color_width,
+                            color_height,
+                        ) = get_image_info(color.unwrap());
+                        assert_eq!(
+                            [swapchain_width, swapchain_height],
+                            [color_width, color_height]
+                        );
+
+                        PaintConfig {
+                            command_buffer: e.command_buffer(),
+                            queue_family: e.get_current_queue().family(),
+                            submission: e.get_current_submission(),
+                            color_view,
+                            color_flags: color_flags.unwrap(),
+                            color_usage: color_usage,
+                            color_view_formats: formats,
+                            resolve_view: swapchain_view,
+                            resolve_flags: swapchain_flags.unwrap_or_default(),
+                            resolve_usage: swapchain_usage,
+                            resolve_view_formats: formats,
+                            clear: None,
+                            pixels_per_point: data.pixels_per_point,
+                            primitives: &data.primitives,
+                            textures_delta: &data.textures_delta,
+                            size: [swapchain_width, swapchain_height],
+                        }
+                    };
+
+                    let copy_submissions = egui_pass.lock().unwrap().paint(&config, d);
 
                     for s in copy_submissions {
                         e.add_extra_submission_dependency(s);

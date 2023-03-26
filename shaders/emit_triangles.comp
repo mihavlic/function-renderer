@@ -98,13 +98,10 @@ void main() {
             v3 = get_cell_vertex_index(A + uvec3(1,1,0));
         }
         
-        // if (v1 == INDEX_INVALID || v2 == INDEX_INVALID || v3 == INDEX_INVALID)
-        // {
-        //     // Shouldn't ever happen
-        //     // kinda can't do error reporting from the shader
-        //     // also this may happen when we've run out ofspace in the vertex buffer in the previous pass
-        //     continue;
-        // }
+        if (v1 == INDEX_INVALID || v2 == INDEX_INVALID || v3 == INDEX_INVALID) {
+            // this may happen when we've run out ofspace in the vertex buffer in the previous pass
+            continue;
+        }
 
         int o = triangle_indices_offset;
         triangle_indices[o + 0] = v0;

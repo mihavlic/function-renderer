@@ -63,33 +63,75 @@ pub struct Renderer {
     next_native_tex_id: u64,
 }
 
+pub struct RendererConfig {
+    pub output_attachment_is_unorm_nonlinear: bool,
+    pub format: vk::Format,
+
+    pub samples: vk::SampleCountFlags,
+
+    pub color_load_op: vk::AttachmentLoadOp,
+    pub color_store_op: vk::AttachmentStoreOp,
+
+    pub color_src_layout: vk::ImageLayout,
+    pub color_src_stages: vk::PipelineStageFlags,
+    pub color_src_access: vk::AccessFlags,
+    pub color_final_layout: vk::ImageLayout,
+
+    pub resolve_enable: bool,
+
+    pub resolve_load_op: vk::AttachmentLoadOp,
+    pub resolve_store_op: vk::AttachmentStoreOp,
+
+    pub resolve_src_layout: vk::ImageLayout,
+    pub resolve_src_stages: vk::PipelineStageFlags,
+    pub resolve_src_access: vk::AccessFlags,
+    pub resolve_final_layout: vk::ImageLayout,
+}
+
+pub struct PaintConfig<'a> {
+    pub command_buffer: vk::CommandBuffer,
+    pub queue_family: u32,
+    pub submission: QueueSubmission,
+
+    pub color_view: vk::ImageView,
+    pub color_flags: vk::ImageCreateFlags,
+    pub color_usage: vk::ImageUsageFlags,
+    pub color_view_formats: &'a [vk::Format],
+
+    pub resolve_view: vk::ImageView,
+    pub resolve_flags: vk::ImageCreateFlags,
+    pub resolve_usage: vk::ImageUsageFlags,
+    pub resolve_view_formats: &'a [vk::Format],
+
+    pub clear: Option<vk::ClearColorValue>,
+    pub pixels_per_point: f32,
+
+    pub primitives: &'a [egui::ClippedPrimitive],
+    pub textures_delta: &'a TexturesDelta,
+    pub size: [u32; 2],
+}
+
 impl Renderer {
-    pub unsafe fn new_with_render_pass(
-        output_attachment_is_unorm_nonlinear: bool,
-        format: vk::Format,
+    pub unsafe fn new_with_render_pass(config: &RendererConfig, device: &Device) -> Renderer {
+        let &RendererConfig {
+            output_attachment_is_unorm_nonlinear,
+            format,
+            samples,
+            color_load_op,
+            color_store_op,
+            color_src_layout,
+            color_src_stages,
+            color_src_access,
+            color_final_layout,
+            resolve_enable,
+            resolve_load_op,
+            resolve_store_op,
+            resolve_src_layout,
+            resolve_src_stages,
+            resolve_src_access,
+            resolve_final_layout,
+        } = config;
 
-        samples: vk::SampleCountFlags,
-
-        color_load_op: vk::AttachmentLoadOp,
-        color_store_op: vk::AttachmentStoreOp,
-
-        color_src_layout: vk::ImageLayout,
-        color_src_stages: vk::PipelineStageFlags,
-        color_src_access: vk::AccessFlags,
-        color_final_layout: vk::ImageLayout,
-
-        resolve_enable: bool,
-
-        resolve_load_op: vk::AttachmentLoadOp,
-        resolve_store_op: vk::AttachmentStoreOp,
-
-        resolve_src_layout: vk::ImageLayout,
-        resolve_src_stages: vk::PipelineStageFlags,
-        resolve_src_access: vk::AccessFlags,
-        resolve_final_layout: vk::ImageLayout,
-
-        device: &Device,
-    ) -> Renderer {
         if resolve_enable {
             assert!(samples != vk::SampleCountFlags::C1);
         }
@@ -712,29 +754,28 @@ impl Renderer {
     /// Record paint commands.
     pub unsafe fn paint(
         &mut self,
-        command_buffer: vk::CommandBuffer,
-        queue_family: u32,
-        submission: QueueSubmission,
-
-        color_view: vk::ImageView,
-        color_flags: vk::ImageCreateFlags,
-        color_usage: vk::ImageUsageFlags,
-        color_view_formats: &[vk::Format],
-
-        resolve_view: vk::ImageView,
-        resolve_flags: vk::ImageCreateFlags,
-        resolve_usage: vk::ImageUsageFlags,
-        resolve_view_formats: &[vk::Format],
-
-        clear: Option<vk::ClearColorValue>,
-        pixels_per_point: f32,
-
-        primitives: &[egui::ClippedPrimitive],
-        textures_delta: &TexturesDelta,
-        [width, height]: [u32; 2],
-
+        config: &PaintConfig,
         device: &Device,
     ) -> SmallVec<[QueueSubmission; 4]> {
+        let &PaintConfig {
+            command_buffer,
+            queue_family,
+            submission,
+            color_view,
+            color_flags,
+            color_usage,
+            color_view_formats,
+            resolve_view,
+            resolve_flags,
+            resolve_usage,
+            resolve_view_formats,
+            clear,
+            pixels_per_point,
+            primitives,
+            textures_delta,
+            size: [width, height],
+        } = config;
+
         if self.resolve_attachment {
             assert!(resolve_view != vk::ImageView::null());
         }

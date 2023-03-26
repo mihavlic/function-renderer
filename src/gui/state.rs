@@ -126,20 +126,16 @@ impl GuiControl {
         }
     }
     pub fn ui(&mut self, ctx: &egui::Context) {
-        let color = ctx.style().visuals.window_fill;
         egui::Window::new("")
             .id(egui::Id::new("Control"))
             .fixed_pos((8.0, 8.0))
             .frame(egui::containers::Frame {
-                outer_margin: egui::Margin::same(0.0),
-                inner_margin: egui::Margin::same(5.0),
-                rounding: egui::Rounding::same(5.0),
-                fill: color,
-                stroke: egui::Stroke::new(0.0, color),
+                stroke: egui::Stroke::NONE,
                 shadow: egui::epaint::Shadow {
                     extrusion: 8.0,
                     color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 50),
                 },
+                ..egui::Frame::window(&ctx.style())
             })
             .auto_sized()
             .title_bar(false)

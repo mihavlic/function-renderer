@@ -81,6 +81,7 @@ impl CreatePass for MeshPass {
             vk::PipelineStageFlags2KHR::VERTEX_INPUT,
             vk::AccessFlags2KHR::VERTEX_ATTRIBUTE_READ,
         );
+
         let mode = RenderPassMode::Dynamic {
             view_mask: 0,
             colors: self
@@ -90,11 +91,10 @@ impl CreatePass for MeshPass {
                 .collect(),
             depth: self
                 .depth
-                .map(|image| builder.get_image_format(image))
+                .map(|depth| builder.get_image_format(depth))
                 .unwrap_or(vk::Format::UNDEFINED),
             stencil: vk::Format::UNDEFINED,
         };
-
         builder.compile_graphics_pipeline(&self.pipeline, &mode)
     }
 
