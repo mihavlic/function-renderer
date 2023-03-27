@@ -32,12 +32,12 @@ pub struct PushConstants {
     screen_size: [f32; 2],
 }
 
-struct TextureImage {
-    image: object::Image,
-    is_rgba: bool,
-    set: vk::DescriptorSet,
-    view: vk::ImageView,
-    options: egui::TextureOptions,
+pub struct TextureImage {
+    pub image: object::Image,
+    pub is_rgba: bool,
+    pub set: vk::DescriptorSet,
+    pub view: vk::ImageView,
+    pub options: egui::TextureOptions,
 }
 
 pub struct Renderer {
@@ -528,37 +528,27 @@ impl Renderer {
 
                 let entry = self.texture_images.entry(texture_id);
 
-                let mut maybe_remake_set = |texture: &mut TextureImage| {
-                    if texture.options != blit.options {
-                        let sampler = Self::get_sampler(&mut self.samplers, blit.options, device);
-                        let new_set = self.set_allocator.allocate(
-                            texture.view,
-                            sampler,
-                            &self.desc_layout,
-                            device,
-                        );
-
-                        self.pending_retired_sets.push(texture.set);
-                        texture.options = blit.options;
-                        texture.set = new_set;
-                    }
-                };
-
                 'handle_blit: {
                     // this means that a new image is to be created with the size of this delta
                     if let Some(pos) = blit.pos {
                         let Entry::Occupied(mut v) = entry else {
                            panic!("Updating a not yet initialized image");
                         };
+
                         let texture = &mut v.get_mut();
                         let (texture_width, texture_height) =
                             texture.image.get_create_info().size.get_2d().unwrap();
+
                         if (pos[0] as u32 + width > texture_width)
                             || (pos[1] as u32 + height > texture_height)
                         {
                             panic!("Write out of bounds for texture {:?}", texture_id);
                         }
-                        maybe_remake_set(texture);
+
+                        assert_eq!(
+                            texture.options, blit.options,
+                            "Cannot change texture filtering through a partial delta"
+                        );
                     } else {
                         // we may get creation requests multiple times (at least for the font texture)
                         if let Entry::Occupied(mut v) = entry {
@@ -568,7 +558,22 @@ impl Renderer {
 
                             if width == old_width && height == old_height && old.is_rgba == is_rgba
                             {
-                                maybe_remake_set(v.get_mut());
+                                let texture = v.get_mut();
+                                if texture.options != blit.options {
+                                    let sampler =
+                                        Self::get_sampler(&mut self.samplers, blit.options, device);
+                                    let new_set = self.set_allocator.allocate(
+                                        texture.view,
+                                        sampler,
+                                        &self.desc_layout,
+                                        device,
+                                    );
+
+                                    self.pending_retired_sets.push(texture.set);
+                                    texture.options = blit.options;
+                                    texture.set = new_set;
+                                };
+
                                 break 'handle_blit;
                             } else {
                                 v.remove();
@@ -1024,5 +1029,9 @@ impl Renderer {
         d.cmd_end_render_pass(command_buffer);
 
         wait_submission
+    }
+
+    pub fn get_texture(&self, id: egui::TextureId) -> Option<&TextureImage> {
+        self.texture_images.get(&id)
     }
 }

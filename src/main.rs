@@ -43,10 +43,10 @@ use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
 
 use crate::gui::{PaintConfig, RendererConfig};
-use crate::parse::{MAX_MARGIN, MIN_MARGIN};
+use crate::parse::{TotalF32, MAX_MARGIN, MIN_MARGIN};
 use crate::passes::{LambdaPass, MeshPass};
 
-pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C8;
+pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
 
 pub struct FrameData {
     camera: Transform<RightHanded>,
@@ -110,7 +110,7 @@ fn main() {
 
         let mut graph: Option<CompiledGraph> = None;
 
-        let context = egui::Context::default();
+        let context = Arc::new(egui::Context::default());
         set_fonts(&context);
         // context.fonts_mut(|fonts| fonts.unwrap().get)
         let mut winit = egui_winit::State::new(&event_loop);
@@ -275,6 +275,7 @@ fn main() {
                             &mut modules,
                             &mut compiler,
                             &mut cache,
+                            context.clone(),
                             &device,
                         );
 
@@ -316,6 +317,7 @@ unsafe fn make_graph(
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
     cache: &mut RecomputationCache,
+    egui_context: Arc<egui::Context>,
     device: &device::OwnedDevice,
 ) -> Result<CompiledGraph, Box<dyn Error>> {
     macro_rules! args {
@@ -1048,6 +1050,7 @@ unsafe fn make_graph(
             "Draw triangles",
         );
 
+        let egui_pass_copy = egui_pass.clone();
         b.add_pass(
             queue,
             LambdaPass(
@@ -1148,7 +1151,7 @@ unsafe fn make_graph(
                         }
                     };
 
-                    let copy_submissions = egui_pass.lock().unwrap().paint(&config, d);
+                    let copy_submissions = egui_pass_copy.lock().unwrap().paint(&config, d);
 
                     for s in copy_submissions {
                         e.add_extra_submission_dependency(s);
@@ -1159,6 +1162,88 @@ unsafe fn make_graph(
                 },
             ),
             "Draw egui",
+        );
+
+        b.add_pass(
+            queue,
+            LambdaPass(
+                move |builder| {
+                    builder.use_image(
+                        swapchain_image,
+                        vk::ImageUsageFlags::TRANSFER_DST,
+                        vk::PipelineStageFlags2KHR::BLIT,
+                        vk::AccessFlags2KHR::TRANSFER_WRITE,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        None,
+                    );
+                },
+                move |e, d| {
+                    let (width, height) = e.get_image_extent(swapchain_image).get_2d().unwrap();
+                    let cmd = e.command_buffer();
+                    let d = d.device();
+
+                    let font_texture = egui_pass
+                        .lock()
+                        .unwrap()
+                        .get_texture(egui::TextureId::default())
+                        .unwrap();
+
+                    let atlas_discs =
+                        egui_context.fonts(|f| f.texture_atlas().lock().prepared_discs());
+
+                    let target_radius = 20.0 * state.lock().unwrap().pixels_per_point;
+                    let disc = atlas_discs
+                        .iter()
+                        .min_by_key(|d| TotalF32((d.r - target_radius).abs()))
+                        .unwrap();
+
+                    let target_radius_i = target_radius.round() as u32;
+                    let src_radius_i = disc.r.round() as u32;
+
+                    let src_offsets = {
+                        let (font_width, font_height) =
+                            font_texture.image.get_create_info().size.get_2d().unwrap();
+
+                        let min = vk::Offset3D {
+                            x: (disc.uv.min.x * font_width as f32).round() as i32,
+                            y: (disc.uv.min.y * font_height as f32).round() as i32,
+                            z: 0,
+                        };
+                        let max = vk::Offset3D {
+                            x: (disc.uv.min.x * font_width as f32 + disc.w).round() as i32,
+                            y: (disc.uv.min.y * font_height as f32 + disc.w).round() as i32,
+                            z: 0,
+                        };
+                        [min, max]
+                    };
+
+                    let swapchain = e.get_image(swapchain_image);
+
+                    let regions = [vk::ImageBlit {
+                        src_subresource: vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                        src_offsets: src_offsets.clone(),
+                        dst_subresource: todo!(),
+                        dst_offsets: todo!(),
+                    }];
+
+                    // d.cmd_pipeline_barrier_2_khr(command_buffer, dependency_info)
+                    d.cmd_blit_image(
+                        cmd,
+                        font_texture.image.get_handle(),
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        swapchain,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        regions,
+                        vk::Filter::LINEAR,
+                    )
+                },
+            ),
+            "Round corners",
         );
     });
 
