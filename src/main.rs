@@ -25,7 +25,7 @@ use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
-use gui::{egui_icon_font_family, GuiControl, FONT_BYTES};
+use gui::{egui_icon_font_family, GuiControl, GuiResult, FONT_BYTES};
 use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
 use parse::math_into_glsl;
 use pumice::{util::ApiLoadConfig, vk};
@@ -79,7 +79,8 @@ fn main() {
 
         let window = WindowBuilder::new()
             .with_inner_size(winit::dpi::LogicalSize::new(512.0f32, 512.0f32))
-            .with_title("Emil")
+            .with_decorations(false)
+            .with_transparent(true)
             .build(&event_loop)
             .unwrap();
 
@@ -137,6 +138,8 @@ fn main() {
         let mut cache_option = Some(cache);
 
         let mut first = true;
+
+        let mut inner_size = None;
 
         event_loop.run(move |event, _, control_flow| {
             if let Event::WindowEvent { window_id, event } = &event {
@@ -227,10 +230,27 @@ fn main() {
                                 .pixels_per_point
                                 .unwrap_or(winit.pixels_per_point());
                             context.begin_frame(new_input);
-                            gui.ui(&context);
+                            let response = gui.ui(&context, &window);
                             let output = context.end_frame();
                             winit.handle_platform_output(&window, &context, output.platform_output);
                             let clipped_meshes = context.tessellate(output.shapes);
+
+                            if response.control_flow == GuiResult::Exit {
+                                exit = true;
+                            }
+
+                            if Some(response.inner_image_size) != inner_size {
+                                inner_size = Some(response.inner_image_size);
+                                rebuild_graph = true;
+                            }
+
+                            let m = 0.3;
+                            if mouse_left_pressed {
+                                let egui::Vec2 { x, y } = response.drag_delta;
+                                camera
+                                    .driver_mut::<YawPitchZUp>()
+                                    .rotate_yaw_pitch(x * m, y * m);
+                            }
 
                             {
                                 let mut lock = frame_data.lock().unwrap();
@@ -270,6 +290,7 @@ fn main() {
                     if rebuild_graph && !exit {
                         let result = make_graph(
                             &swapchain,
+                            inner_size.unwrap_or([512; 2]),
                             queue,
                             frame_data.clone(),
                             &mut modules,
@@ -312,6 +333,7 @@ fn main() {
 
 unsafe fn make_graph(
     swapchain: &object::Swapchain,
+    function_extent: [u32; 2],
     queue: device::submission::Queue,
     state: Arc<Mutex<FrameData>>,
     modules: &mut ShaderModules,
@@ -370,7 +392,11 @@ unsafe fn make_graph(
         Ok(pipeline.into_inner())
     };
 
-    let create_image = |format: vk::Format, size: object::Extent, label: &'static str| {
+    let create_image = |format: vk::Format,
+                        samples: vk::SampleCountFlags,
+                        size: object::Extent,
+                        usage: vk::ImageUsageFlags,
+                        label: &'static str| {
         let mut cache = cache.borrow_mut();
         cache
             .compute_named(label, args!(format, size), || {
@@ -384,7 +410,7 @@ unsafe fn make_graph(
                             mip_levels: 1,
                             array_layers: 1,
                             tiling: vk::ImageTiling::OPTIMAL,
-                            usage: vk::ImageUsageFlags::STORAGE,
+                            usage,
                             sharing_mode_concurrent: false,
                             initial_layout: vk::ImageLayout::UNDEFINED,
                             label: Some(label.into()),
@@ -429,19 +455,58 @@ unsafe fn make_graph(
     let compute_vertex = create_pipeline("shaders/compute_vertex.comp", true)?;
     let emit_triangles = create_pipeline("shaders/emit_triangles.comp", false)?;
 
+    let depth_image = create_image(
+        vk::Format::D32_SFLOAT,
+        MSAA_SAMPLE_COUNT,
+        object::Extent::D2(function_extent[0], function_extent[1]),
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        "depth",
+    );
+    let color_image = create_image(
+        vk::Format::B8G8R8A8_UNORM,
+        MSAA_SAMPLE_COUNT,
+        object::Extent::D2(function_extent[0], function_extent[1]),
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+        "color",
+    );
+    let resolve_image = (MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1).then(|| {
+        create_image(
+            vk::Format::B8G8R8A8_UNORM,
+            vk::SampleCountFlags::C1,
+            object::Extent::D2(function_extent[0], function_extent[1]),
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+            "resolve",
+        )
+    });
+    let window_color_image = (MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1).then(|| {
+        create_image(
+            vk::Format::B8G8R8A8_UNORM,
+            MSAA_SAMPLE_COUNT,
+            object::Extent::D2(function_extent[0], function_extent[1]),
+            vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            "resolve",
+        )
+    });
+
     let function_values = create_image(
         vk::Format::R16_SFLOAT,
+        vk::SampleCountFlags::C1,
         object::Extent::D3(64, 64, 64),
+        vk::ImageUsageFlags::STORAGE,
         "function_values",
     );
     let intersections = create_image(
         vk::Format::R32G32B32A32_SFLOAT,
+        vk::SampleCountFlags::C1,
         object::Extent::D3(64 * 3, 64, 64),
+        vk::ImageUsageFlags::STORAGE,
         "intersections",
     );
     let vertex_indices = create_image(
         vk::Format::R32_UINT,
+        vk::SampleCountFlags::C1,
         object::Extent::D3(64, 64, 64),
+        vk::ImageUsageFlags::STORAGE,
         "vertex_indices",
     );
 
@@ -577,7 +642,7 @@ unsafe fn make_graph(
                     output_attachment_is_unorm_nonlinear: true,
                     format: vk::Format::B8G8R8A8_UNORM,
                     samples: MSAA_SAMPLE_COUNT,
-                    color_load_op: vk::AttachmentLoadOp::LOAD,
+                    color_load_op: vk::AttachmentLoadOp::CLEAR,
                     color_store_op: vk::AttachmentStoreOp::STORE,
                     color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                     color_src_stages: vk::PipelineStageFlags::empty(),
@@ -596,7 +661,7 @@ unsafe fn make_graph(
                     output_attachment_is_unorm_nonlinear: true,
                     format: vk::Format::B8G8R8A8_UNORM,
                     samples: MSAA_SAMPLE_COUNT,
-                    color_load_op: vk::AttachmentLoadOp::LOAD,
+                    color_load_op: vk::AttachmentLoadOp::CLEAR,
                     color_store_op: vk::AttachmentStoreOp::DONT_CARE,
                     color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                     color_src_stages: vk::PipelineStageFlags::empty(),
@@ -611,9 +676,9 @@ unsafe fn make_graph(
                     resolve_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                 }
             };
-            Arc::new(Mutex::new(UnsafeSendSync::new(
-                gui::Renderer::new_with_render_pass(&config, device),
-            )))
+            Arc::new(Mutex::new(UnsafeSendSync::new(gui::Renderer::new(
+                &config, device,
+            ))))
         })
         .into_inner();
 
@@ -623,9 +688,17 @@ unsafe fn make_graph(
         .expect("Compute pipelines have already been compiled, the all layout must be available")
         .into_inner();
 
-    let graph = compiler.compile(device.clone(), |b| {
+    let graph = compiler.compile(device.clone(), move |b| {
         let queue = b.import_queue(queue);
         let swapchain_image = b.acquire_swapchain(swapchain.clone());
+
+        let depth = b.import_image((depth_image, "depth"));
+        let color = b.import_image((color_image.clone(), "color"));
+        let window_color =
+            window_color_image.map(|window_color| b.import_image((window_color, "window_color")));
+        let resolve = resolve_image
+            .clone()
+            .map(|resolve| b.import_image((resolve, "resolve")));
 
         let function_values = b.import_image((function_values, "function_values"));
         let intersections = b.import_image((intersections, "intersections"));
@@ -716,56 +789,6 @@ unsafe fn make_graph(
                 &[data.set],
                 &data.dynamic_offsets,
             )
-        };
-
-        let swapchain_size = swapchain.get_extent();
-        let depth = b.create_image(
-            object::ImageCreateInfo {
-                flags: vk::ImageCreateFlags::empty(),
-                size: object::Extent::D2(swapchain_size.width, swapchain_size.height),
-                format: vk::Format::D32_SFLOAT,
-                samples: MSAA_SAMPLE_COUNT,
-                mip_levels: 1,
-                array_layers: 1,
-                tiling: vk::ImageTiling::OPTIMAL,
-                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                sharing_mode_concurrent: false,
-                initial_layout: vk::ImageLayout::UNDEFINED,
-                label: Some("depth".into()),
-            },
-            vma::AllocationCreateInfo {
-                flags: vma::AllocationCreateFlags::empty(),
-                usage: vma::MemoryUsage::Unknown,
-                required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                ..Default::default()
-            },
-        );
-        let color = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
-            None
-        } else {
-            let color = b.create_image(
-                object::ImageCreateInfo {
-                    flags: vk::ImageCreateFlags::empty(),
-                    size: object::Extent::D2(swapchain_size.width, swapchain_size.height),
-                    format: vk::Format::B8G8R8A8_UNORM,
-                    samples: MSAA_SAMPLE_COUNT,
-                    mip_levels: 1,
-                    array_layers: 1,
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
-                    sharing_mode_concurrent: false,
-                    initial_layout: vk::ImageLayout::UNDEFINED,
-                    label: Some("color".into()),
-                },
-                vma::AllocationCreateInfo {
-                    flags: vma::AllocationCreateFlags::empty(),
-                    usage: vma::MemoryUsage::Unknown,
-                    required_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    ..Default::default()
-                },
-            );
-            Some(color)
         };
 
         let draw_parameter_buffer = b.create_buffer(
@@ -1030,9 +1053,9 @@ unsafe fn make_graph(
         );
 
         let (attachments, resolve_attachments) = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
-            (vec![swapchain_image], vec![])
+            (vec![color], vec![])
         } else {
-            (vec![color.unwrap()], vec![/* swapchain_image */])
+            (vec![color], vec![resolve.unwrap()])
         };
 
         b.add_pass(
@@ -1055,6 +1078,16 @@ unsafe fn make_graph(
             queue,
             LambdaPass(
                 move |builder| {
+                    if MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1 {
+                        builder.use_image(
+                            window_color.unwrap(),
+                            vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                            vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
+                            vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
+                            vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                            None,
+                        );
+                    };
                     builder.use_image(
                         swapchain_image,
                         vk::ImageUsageFlags::COLOR_ATTACHMENT,
@@ -1063,16 +1096,20 @@ unsafe fn make_graph(
                         vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                         None,
                     );
-                    if MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1 {
-                        builder.use_image(
-                            color.unwrap(),
-                            vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                            vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
-                            vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
-                            vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                            None,
-                        );
-                    }
+
+                    let function_texture = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
+                        color
+                    } else {
+                        resolve.unwrap()
+                    };
+                    builder.use_image(
+                        function_texture,
+                        vk::ImageUsageFlags::SAMPLED,
+                        vk::PipelineStageFlags2KHR::FRAGMENT_SHADER,
+                        vk::AccessFlags2KHR::SHADER_SAMPLED_READ,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        None,
+                    );
                 },
                 move |e, d| {
                     let get_image_info = |image: GraphImage| {
@@ -1098,6 +1135,8 @@ unsafe fn make_graph(
                     let formats = &[swapchain_format];
                     let mut data = state.lock().unwrap();
 
+                    let clear = vk::ClearColorValue { float_32: [0.0; 4] };
+                    let (width, height) = e.get_image_extent(swapchain_image).get_2d().unwrap();
                     let config = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
                         PaintConfig {
                             command_buffer: e.command_buffer(),
@@ -1111,11 +1150,11 @@ unsafe fn make_graph(
                             resolve_flags: Default::default(),
                             resolve_usage: Default::default(),
                             resolve_view_formats: Default::default(),
-                            clear: None,
+                            clear: Some(clear),
                             pixels_per_point: data.pixels_per_point,
                             primitives: &data.primitives,
                             textures_delta: &data.textures_delta,
-                            size: [swapchain_width, swapchain_height],
+                            size: [width, height],
                         }
                     } else {
                         let (
@@ -1125,11 +1164,8 @@ unsafe fn make_graph(
                             color_format,
                             color_width,
                             color_height,
-                        ) = get_image_info(color.unwrap());
-                        assert_eq!(
-                            [swapchain_width, swapchain_height],
-                            [color_width, color_height]
-                        );
+                        ) = get_image_info(window_color.unwrap());
+                        assert_eq!([width, height], [color_width, color_height]);
 
                         PaintConfig {
                             command_buffer: e.command_buffer(),
@@ -1143,15 +1179,28 @@ unsafe fn make_graph(
                             resolve_flags: swapchain_flags.unwrap_or_default(),
                             resolve_usage: swapchain_usage,
                             resolve_view_formats: formats,
-                            clear: None,
+                            clear: Some(clear),
                             pixels_per_point: data.pixels_per_point,
                             primitives: &data.primitives,
                             textures_delta: &data.textures_delta,
-                            size: [swapchain_width, swapchain_height],
+                            size: [width, height],
                         }
                     };
 
-                    let copy_submissions = egui_pass_copy.lock().unwrap().paint(&config, d);
+                    let mut renderer = egui_pass_copy.lock().unwrap();
+                    let tex = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
+                        color_image.clone()
+                    } else {
+                        resolve_image.clone().unwrap()
+                    };
+                    renderer.add_texture(
+                        egui::TextureId::User(0),
+                        tex,
+                        egui::TextureOptions::NEAREST,
+                        vk::ComponentMapping::default(),
+                        d,
+                    );
+                    let copy_submissions = renderer.paint(&config, d);
 
                     for s in copy_submissions {
                         e.add_extra_submission_dependency(s);
@@ -1164,87 +1213,87 @@ unsafe fn make_graph(
             "Draw egui",
         );
 
-        b.add_pass(
-            queue,
-            LambdaPass(
-                move |builder| {
-                    builder.use_image(
-                        swapchain_image,
-                        vk::ImageUsageFlags::TRANSFER_DST,
-                        vk::PipelineStageFlags2KHR::BLIT,
-                        vk::AccessFlags2KHR::TRANSFER_WRITE,
-                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                        None,
-                    );
-                },
-                move |e, d| {
-                    let (width, height) = e.get_image_extent(swapchain_image).get_2d().unwrap();
-                    let cmd = e.command_buffer();
-                    let d = d.device();
+        // b.add_pass(
+        //     queue,
+        //     LambdaPass(
+        //         move |builder| {
+        //             builder.use_image(
+        //                 swapchain_image,
+        //                 vk::ImageUsageFlags::TRANSFER_DST,
+        //                 vk::PipelineStageFlags2KHR::BLIT,
+        //                 vk::AccessFlags2KHR::TRANSFER_WRITE,
+        //                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        //                 None,
+        //             );
+        //         },
+        //         move |e, d| {
+        //             let (width, height) = e.get_image_extent(swapchain_image).get_2d().unwrap();
+        //             let cmd = e.command_buffer();
+        //             let d = d.device();
 
-                    let font_texture = egui_pass
-                        .lock()
-                        .unwrap()
-                        .get_texture(egui::TextureId::default())
-                        .unwrap();
+        //             let font_texture = egui_pass
+        //                 .lock()
+        //                 .unwrap()
+        //                 .get_texture(egui::TextureId::default())
+        //                 .unwrap();
 
-                    let atlas_discs =
-                        egui_context.fonts(|f| f.texture_atlas().lock().prepared_discs());
+        //             let atlas_discs =
+        //                 egui_context.fonts(|f| f.texture_atlas().lock().prepared_discs());
 
-                    let target_radius = 20.0 * state.lock().unwrap().pixels_per_point;
-                    let disc = atlas_discs
-                        .iter()
-                        .min_by_key(|d| TotalF32((d.r - target_radius).abs()))
-                        .unwrap();
+        //             let target_radius = 20.0 * state.lock().unwrap().pixels_per_point;
+        //             let disc = atlas_discs
+        //                 .iter()
+        //                 .min_by_key(|d| TotalF32((d.r - target_radius).abs()))
+        //                 .unwrap();
 
-                    let target_radius_i = target_radius.round() as u32;
-                    let src_radius_i = disc.r.round() as u32;
+        //             let target_radius_i = target_radius.round() as u32;
+        //             let src_radius_i = disc.r.round() as u32;
 
-                    let src_offsets = {
-                        let (font_width, font_height) =
-                            font_texture.image.get_create_info().size.get_2d().unwrap();
+        //             let src_offsets = {
+        //                 let (font_width, font_height) =
+        //                     font_texture.image.get_create_info().size.get_2d().unwrap();
 
-                        let min = vk::Offset3D {
-                            x: (disc.uv.min.x * font_width as f32).round() as i32,
-                            y: (disc.uv.min.y * font_height as f32).round() as i32,
-                            z: 0,
-                        };
-                        let max = vk::Offset3D {
-                            x: (disc.uv.min.x * font_width as f32 + disc.w).round() as i32,
-                            y: (disc.uv.min.y * font_height as f32 + disc.w).round() as i32,
-                            z: 0,
-                        };
-                        [min, max]
-                    };
+        //                 let min = vk::Offset3D {
+        //                     x: (disc.uv.min.x * font_width as f32).round() as i32,
+        //                     y: (disc.uv.min.y * font_height as f32).round() as i32,
+        //                     z: 0,
+        //                 };
+        //                 let max = vk::Offset3D {
+        //                     x: (disc.uv.min.x * font_width as f32 + disc.w).round() as i32,
+        //                     y: (disc.uv.min.y * font_height as f32 + disc.w).round() as i32,
+        //                     z: 0,
+        //                 };
+        //                 [min, max]
+        //             };
 
-                    let swapchain = e.get_image(swapchain_image);
+        //             let swapchain = e.get_image(swapchain_image);
 
-                    let regions = [vk::ImageBlit {
-                        src_subresource: vk::ImageSubresourceLayers {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            mip_level: 0,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        },
-                        src_offsets: src_offsets.clone(),
-                        dst_subresource: todo!(),
-                        dst_offsets: todo!(),
-                    }];
+        //             let regions = [vk::ImageBlit {
+        //                 src_subresource: vk::ImageSubresourceLayers {
+        //                     aspect_mask: vk::ImageAspectFlags::COLOR,
+        //                     mip_level: 0,
+        //                     base_array_layer: 0,
+        //                     layer_count: 1,
+        //                 },
+        //                 src_offsets: src_offsets.clone(),
+        //                 dst_subresource: todo!(),
+        //                 dst_offsets: todo!(),
+        //             }];
 
-                    // d.cmd_pipeline_barrier_2_khr(command_buffer, dependency_info)
-                    d.cmd_blit_image(
-                        cmd,
-                        font_texture.image.get_handle(),
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                        swapchain,
-                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                        regions,
-                        vk::Filter::LINEAR,
-                    )
-                },
-            ),
-            "Round corners",
-        );
+        //             // d.cmd_pipeline_barrier_2_khr(command_buffer, dependency_info)
+        //             d.cmd_blit_image(
+        //                 cmd,
+        //                 font_texture.image.get_handle(),
+        //                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        //                 swapchain,
+        //                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        //                 regions,
+        //                 vk::Filter::LINEAR,
+        //             )
+        //         },
+        //     ),
+        //     "Round corners",
+        // );
     });
 
     Ok(graph)

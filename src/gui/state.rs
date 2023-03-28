@@ -11,15 +11,18 @@ use std::{
     sync::{mpsc::Sender, Arc, Mutex},
 };
 
-use super::icons;
+use super::{
+    icons,
+    window::{custom_window_frame, GuiResult},
+};
 
-fn icon_button(ui: &mut egui::Ui, icon: char) -> egui::Response {
+pub fn icon_button(ui: &mut egui::Ui, icon: char) -> egui::Response {
     egui::Label::new(icon_text(icon, 12.5))
         .sense(egui::Sense::click())
         .ui(ui)
 }
 
-fn icon_text(icon: char, size: f32) -> egui::RichText {
+pub fn icon_text(icon: char, size: f32) -> egui::RichText {
     egui::RichText::new(icon).font(egui::FontId::new(size, egui_icon_font_family()))
 }
 
@@ -83,6 +86,12 @@ enum ControlKind {
     Interval,
 }
 
+pub struct WindowResult {
+    pub drag_delta: egui::Vec2,
+    pub inner_image_size: [u32; 2],
+    pub control_flow: GuiResult,
+}
+
 pub struct GuiControl {
     edit: String,
     sender: Sender<AsyncEvent>,
@@ -131,61 +140,81 @@ impl GuiControl {
             open_settings: false,
         }
     }
-    pub fn ui(&mut self, ctx: &egui::Context) {
-        fn gear_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
-            let stroke = ui.style().interact(&response).fg_stroke;
-            ui.painter().text(
-                response.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                super::icons::COG,
-                egui::FontId {
-                    size: 15.0,
-                    family: egui_icon_font_family(),
-                },
-                stroke.color,
-            );
-        }
-
+    pub fn ui(&mut self, ctx: &egui::Context, window: &winit::window::Window) -> WindowResult {
         let mut new_index = None;
-        egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "title bar").show_animated(
+        let mut size = None;
+        let mut drag_delta = egui::Vec2::ZERO;
+
+        let result = custom_window_frame(
             ctx,
-            true,
+            window,
+            "Emil",
             |ui| {
-                ui.horizontal(|ui| {
-                    if egui::Label::new(icon_text(icons::COG, 12.5))
-                        .sense(egui::Sense::click())
-                        .ui(ui)
-                        .clicked()
-                    {
-                        self.open_settings ^= true;
-                    }
+                if egui::Label::new(icon_text(icons::COG, 13.5))
+                    .sense(egui::Sense::click())
+                    .ui(ui)
+                    .clicked()
+                {
+                    self.open_settings ^= true;
+                }
 
-                    if egui::TextEdit::singleline(&mut self.edit)
-                        .font(egui::TextStyle::Monospace)
-                        .show(ui)
-                        .response
-                        .lost_focus()
-                    {
-                        match parse_math(&self.edit) {
-                            Ok(_) => {
-                                self.history_index = self.history.len();
-                                self.history.push(self.edit.clone());
+                if egui::TextEdit::singleline(&mut self.edit)
+                    .font(egui::TextStyle::Monospace)
+                    .show(ui)
+                    .response
+                    .lost_focus()
+                {
+                    match parse_math(&self.edit) {
+                        Ok(_) => {
+                            self.history_index = self.history.len();
+                            self.history.push(self.edit.clone());
 
-                                self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
-                                self.error = None;
-                            }
-                            Err(e) => {
-                                self.error = Some(e.to_string());
-                            }
+                            self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
+                            self.error = None;
+                        }
+                        Err(e) => {
+                            self.error = Some(e.to_string());
                         }
                     }
-                    if icon_button(ui, icons::LEFT).clicked() {
-                        new_index = self.history_index.checked_sub(1);
-                    }
-                    if icon_button(ui, icons::RIGHT).clicked() {
-                        new_index = self.history_index.checked_add(1);
-                    }
-                });
+                }
+                if icon_button(ui, icons::LEFT).clicked() {
+                    new_index = self.history_index.checked_sub(1);
+                }
+                if icon_button(ui, icons::RIGHT).clicked() {
+                    new_index = self.history_index.checked_add(1);
+                }
+            },
+            |ui| {
+                let all = ui.available_rect_before_wrap();
+                let remaining = egui::Rect {
+                    min: ui.painter().round_pos_to_pixels(all.min),
+                    max: ui.painter().round_pos_to_pixels(all.max),
+                };
+                size = Some(remaining);
+                let mut rect = egui::Mesh::with_texture(egui::TextureId::User(0));
+                rect.add_rect_with_uv(
+                    remaining,
+                    egui::Rect::from_x_y_ranges(0.0..=1.0, 0.0..=1.0),
+                    egui::Color32::WHITE,
+                );
+                ui.painter().add(rect);
+                let response = ui.allocate_rect(
+                    remaining,
+                    egui::Sense {
+                        click: true,
+                        drag: true,
+                        focusable: true,
+                    },
+                );
+                let response = ui.interact(all, egui::Id::new("drag_area"), egui::Sense::click());
+                drag_delta = response.drag_delta();
+
+                if response.drag_started() {
+                    eprintln!("Bbbbbbb");
+                }
+                if response.clicked() {
+                    eprintln!("Aaaaaaa");
+                }
             },
         );
 
@@ -210,11 +239,11 @@ impl GuiControl {
         if state.openness(ctx) > 0.01 {
             egui::Window::new("")
                 .id(egui::Id::new("settings"))
-                .anchor(egui::Align2::LEFT_TOP, (4.0, 4.0))
+                .anchor(egui::Align2::LEFT_TOP, (4.0, 4.0 + 32.0))
                 .auto_sized()
                 .title_bar(false)
-                .frame(frame)
                 .open(&mut self.open_settings)
+                .frame(frame)
                 .show(ctx, |ui| {
                     state.show_body_unindented(ui, |ui| {
                         ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
@@ -245,15 +274,26 @@ impl GuiControl {
             }
         }
 
-        let (min, max) = self.control.output();
-        let mut frame = self.frame.lock().unwrap();
-        // don't ask me how this works
-        let scale = (60.0 + MIN_MARGIN + MAX_MARGIN) / 60.0;
-        let scale2 = MIN_MARGIN / (60.0 + MIN_MARGIN + MAX_MARGIN);
-        let extent = max - min;
-        let scaled_min = min - scale2 * extent;
-        let scaled_max = scaled_min + scale * extent;
-        frame.rect_min = scaled_min;
-        frame.rect_max = scaled_max;
+        {
+            let (min, max) = self.control.output();
+            let mut frame = self.frame.lock().unwrap();
+            // don't ask me how this works
+            let scale = (60.0 + MIN_MARGIN + MAX_MARGIN) / 60.0;
+            let scale2 = MIN_MARGIN / (60.0 + MIN_MARGIN + MAX_MARGIN);
+            let extent = max - min;
+            let scaled_min = min - scale2 * extent;
+            let scaled_max = scaled_min + scale * extent;
+            frame.rect_min = scaled_min;
+            frame.rect_max = scaled_max;
+        }
+
+        let size = size.unwrap().size();
+        let size = [size.x.round() as u32, size.y.round() as u32];
+
+        WindowResult {
+            drag_delta,
+            inner_image_size: size,
+            control_flow: result,
+        }
     }
 }

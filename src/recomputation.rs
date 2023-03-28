@@ -88,8 +88,14 @@ impl RecomputationCache {
                 assert_eq!(TypeId::of::<T>(), (*entry.result).type_id());
 
                 let result = if entry.arguments_fingerprint != arguments_fingerprint {
+                    // make sure to first drop the previous value before creating the new one
+                    unsafe {
+                        std::ptr::drop_in_place(&mut entry.result);
+                    }
                     let recomputed = fun();
-                    entry.result = Box::new(recomputed.clone());
+                    unsafe {
+                        std::ptr::write(&mut entry.result, Box::new(recomputed.clone()));
+                    }
                     entry.arguments_fingerprint = arguments_fingerprint;
 
                     recomputed

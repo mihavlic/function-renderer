@@ -5,10 +5,13 @@ use graph::{
         batch::GenerationId, maybe_attach_debug_label, staging::ImageWrite,
         submission::QueueSubmission, Device,
     },
-    graph::execute::GraphExecutor,
+    graph::{
+        execute::GraphExecutor,
+        resource_marker::{TypeOption, TypeSome},
+    },
     object::{self},
     smallvec::{smallvec, SmallVec},
-    storage::DefaultAhashRandomstate,
+    storage::{DefaultAhashRandomstate, DefaultAhashSet},
     util::ffi_ptr::AsFFiPtr,
 };
 use pumice::{util::ObjectHandle, vk};
@@ -34,7 +37,7 @@ pub struct PushConstants {
 
 pub struct TextureImage {
     pub image: object::Image,
-    pub is_rgba: bool,
+    pub components: vk::ComponentMapping,
     pub set: vk::DescriptorSet,
     pub view: vk::ImageView,
     pub options: egui::TextureOptions,
@@ -112,7 +115,7 @@ pub struct PaintConfig<'a> {
 }
 
 impl Renderer {
-    pub unsafe fn new_with_render_pass(config: &RendererConfig, device: &Device) -> Renderer {
+    pub unsafe fn new(config: &RendererConfig, device: &Device) -> Renderer {
         let &RendererConfig {
             output_attachment_is_unorm_nonlinear,
             format,
@@ -342,12 +345,13 @@ impl Renderer {
                 .color_blend(object::state::ColorBlend {
                     attachments: [object::state::Attachment {
                         blend_enable: vk::TRUE,
-                        color_write_mask: vk::ColorComponentFlags::R
-                            | vk::ColorComponentFlags::G
-                            | vk::ColorComponentFlags::B,
+                        color_write_mask: vk::ColorComponentFlags::all(),
                         src_color_blend_factor: vk::BlendFactor::ONE,
                         dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-                        ..Default::default()
+                        color_blend_op: vk::BlendOp::ADD,
+                        src_alpha_blend_factor: vk::BlendFactor::SRC_ALPHA,
+                        dst_alpha_blend_factor: vk::BlendFactor::DST_ALPHA,
+                        alpha_blend_op: vk::BlendOp::ADD,
                     }]
                     .to_vec(),
                     ..Default::default()
@@ -394,7 +398,7 @@ impl Renderer {
         }
     }
 
-    pub fn register_user_texture(&mut self) -> TextureId {
+    fn register_user_texture(&mut self) -> TextureId {
         let id = self.next_native_tex_id;
         self.next_native_tex_id += 1;
         TextureId::User(id)
@@ -550,13 +554,31 @@ impl Renderer {
                             "Cannot change texture filtering through a partial delta"
                         );
                     } else {
+                        let components = if is_rgba {
+                            vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::IDENTITY,
+                                g: vk::ComponentSwizzle::IDENTITY,
+                                b: vk::ComponentSwizzle::IDENTITY,
+                                a: vk::ComponentSwizzle::IDENTITY,
+                            }
+                        } else {
+                            vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::R,
+                                g: vk::ComponentSwizzle::R,
+                                b: vk::ComponentSwizzle::R,
+                                a: vk::ComponentSwizzle::R,
+                            }
+                        };
+
                         // we may get creation requests multiple times (at least for the font texture)
                         if let Entry::Occupied(mut v) = entry {
                             let old = v.get();
                             let (old_width, old_height) =
                                 old.image.get_create_info().size.get_2d().unwrap();
 
-                            if width == old_width && height == old_height && old.is_rgba == is_rgba
+                            if width == old_width
+                                && height == old_height
+                                && old.components == components
                             {
                                 let texture = v.get_mut();
                                 if texture.options != blit.options {
@@ -576,7 +598,9 @@ impl Renderer {
 
                                 break 'handle_blit;
                             } else {
-                                v.remove();
+                                let old = v.remove();
+                                self.pending_retired_sets.push(old.set);
+                                // the rest is either not owned by the image or is cleaned up automatically
                             }
                         };
 
@@ -619,47 +643,7 @@ impl Renderer {
                             )
                             .unwrap();
 
-                        let components = if is_rgba {
-                            vk::ComponentMapping {
-                                r: vk::ComponentSwizzle::IDENTITY,
-                                g: vk::ComponentSwizzle::IDENTITY,
-                                b: vk::ComponentSwizzle::IDENTITY,
-                                a: vk::ComponentSwizzle::IDENTITY,
-                            }
-                        } else {
-                            vk::ComponentMapping {
-                                r: vk::ComponentSwizzle::R,
-                                g: vk::ComponentSwizzle::R,
-                                b: vk::ComponentSwizzle::R,
-                                a: vk::ComponentSwizzle::R,
-                            }
-                        };
-
-                        let sampler = Self::get_sampler(&mut self.samplers, blit.options, device);
-                        let view = image
-                            .get_view(
-                                &object::ImageViewCreateInfo {
-                                    view_type: vk::ImageViewType::T2D,
-                                    format,
-                                    components,
-                                    subresource_range: image.get_whole_subresource_range(),
-                                },
-                                GenerationId::NEVER,
-                            )
-                            .unwrap();
-                        let set =
-                            self.set_allocator
-                                .allocate(view, sampler, &self.desc_layout, device);
-
-                        let texture = TextureImage {
-                            image,
-                            is_rgba,
-                            set,
-                            view,
-                            options: blit.options,
-                        };
-
-                        self.texture_images.insert(texture_id, texture);
+                        self.add_texture(texture_id, image, blit.options, components, device);
                     }
                 }
 
@@ -763,7 +747,7 @@ impl Renderer {
         device: &Device,
     ) -> SmallVec<[QueueSubmission; 4]> {
         let &PaintConfig {
-            command_buffer,
+            command_buffer: cmd,
             queue_family,
             submission,
             color_view,
@@ -785,17 +769,8 @@ impl Renderer {
             assert!(resolve_view != vk::ImageView::null());
         }
 
-        for set in self.pending_retired_sets.drain(..) {
-            self.set_allocator.free_set(set);
-        }
-
-        let wait_submission = self.update_textures(
-            textures_delta,
-            command_buffer,
-            queue_family,
-            submission,
-            device,
-        );
+        let wait_submission =
+            self.update_textures(textures_delta, cmd, queue_family, submission, device);
 
         let framebuffer_size_differs = || {
             let info = self.framebuffer.as_ref().unwrap().get_create_info();
@@ -869,7 +844,7 @@ impl Renderer {
                 p_clear_values: clear_value.as_ffi_ptr(),
                 ..Default::default()
             };
-            d.cmd_begin_render_pass(command_buffer, &begin, vk::SubpassContents::INLINE);
+            d.cmd_begin_render_pass(cmd, &begin, vk::SubpassContents::INLINE);
         }
 
         let pipeline_layout = &*self.pipeline.get_object().get_create_info().layout;
@@ -877,24 +852,19 @@ impl Renderer {
         // prepare pipeline state
         {
             d.cmd_bind_pipeline(
-                command_buffer,
+                cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline.get_handle(),
             );
-            d.cmd_bind_vertex_buffers(
-                command_buffer,
-                0,
-                &[self.vertex_buffer.0.get_handle()],
-                &[0],
-            );
+            d.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer.0.get_handle()], &[0]);
             d.cmd_bind_index_buffer(
-                command_buffer,
+                cmd,
                 self.index_buffer.0.get_handle(),
                 0,
                 vk::IndexType::UINT32,
             );
             d.cmd_set_viewport(
-                command_buffer,
+                cmd,
                 0,
                 &[vk::Viewport {
                     x: 0.0,
@@ -908,7 +878,7 @@ impl Renderer {
             let width_in_points = width as f32 / pixels_per_point;
             let height_in_points = height as f32 / pixels_per_point;
             d.cmd_push_constants(
-                command_buffer,
+                cmd,
                 pipeline_layout.get_handle(),
                 vk::ShaderStageFlags::VERTEX,
                 0,
@@ -929,6 +899,7 @@ impl Renderer {
         let mut index_offset = 0;
 
         let mut current_texture = None;
+        let mut barrierd_images = DefaultAhashSet::default();
 
         // draw meshes
         for egui::ClippedPrimitive {
@@ -945,9 +916,56 @@ impl Renderer {
             }
 
             if let Some(texture) = self.texture_images.get(&mesh.texture_id) {
+                // even though we're not using a globally stable identity, we hold onto every image through
+                // self.texture_images
+                if barrierd_images.insert(texture.image.get_pointer_identity()) {
+                    texture.image.access_mutable(
+                        |d| d.get_mutable_state(),
+                        |m| {
+                            let state = m.synchronization_state().get_unchecked_mut();
+                            device.retain_active_submissions(&mut state.access);
+                            // assert!(
+                            //     state.access.is_empty() || state.access.as_slice() == &[submission],
+                            //     "egui texture images must be accessed only in this submission {} {}", state.access.is_empty() ,state.access.as_slice() == &[submission]
+                            // );
+
+                            // this path is really only
+                            if state.layout.unwrap() != vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL {
+                                let barrier = vk::ImageMemoryBarrier2KHR {
+                                    // texture deltas have their layout are transitioned immediatelly after the copy
+                                    // so this path only gets taken by user images, it's their job to synchronize access to such images
+                                    src_stage_mask: vk::PipelineStageFlags2KHR::NONE,
+                                    src_access_mask: vk::AccessFlags2KHR::NONE,
+                                    dst_stage_mask: vk::PipelineStageFlags2KHR::FRAGMENT_SHADER,
+                                    dst_access_mask: vk::AccessFlags2KHR::SHADER_READ,
+                                    old_layout: state.layout.unwrap(),
+                                    new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                                    image: texture.image.raw(),
+                                    subresource_range: texture.image.get_whole_subresource_range(),
+                                    ..Default::default()
+                                };
+                                let dependency_info = vk::DependencyInfoKHR {
+                                    image_memory_barrier_count: 1,
+                                    p_image_memory_barriers: &barrier,
+                                    ..Default::default()
+                                };
+                                d.cmd_pipeline_barrier_2_khr(cmd, &dependency_info);
+
+                                if state.access.is_empty() {
+                                    state.access.push(submission);
+                                }
+                                state.layout =
+                                    TypeSome::new_some(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                            }
+                        },
+                    );
+                }
+
                 if current_texture != Some(mesh.texture_id) {
                     d.cmd_bind_descriptor_sets(
-                        command_buffer,
+                        cmd,
                         vk::PipelineBindPoint::GRAPHICS,
                         pipeline_layout.get_handle(),
                         0,
@@ -997,7 +1015,7 @@ impl Renderer {
             let clip_max_y = clip_max_y.clamp(clip_min_y, height as i32);
 
             d.cmd_set_scissor(
-                command_buffer,
+                cmd,
                 0,
                 &[vk::Rect2D {
                     offset: vk::Offset2D {
@@ -1011,7 +1029,7 @@ impl Renderer {
                 }],
             );
             d.cmd_draw_indexed(
-                command_buffer,
+                cmd,
                 mesh.indices.len() as u32,
                 1,
                 index_offset,
@@ -1026,12 +1044,82 @@ impl Renderer {
             vertex_offset += mesh.vertices.len() as i32;
         }
 
-        d.cmd_end_render_pass(command_buffer);
+        d.cmd_end_render_pass(cmd);
 
         wait_submission
     }
 
     pub fn get_texture(&self, id: egui::TextureId) -> Option<&TextureImage> {
         self.texture_images.get(&id)
+    }
+
+    pub unsafe fn add_texture(
+        &mut self,
+        id: egui::TextureId,
+        image: object::Image,
+        texture_options: egui::TextureOptions,
+        components: vk::ComponentMapping,
+        device: &Device,
+    ) {
+        let Self {
+            resolve_attachment,
+            render_pass,
+            framebuffer,
+            set_allocator,
+            desc_layout,
+            pipeline,
+            vertex_buffer,
+            index_buffer,
+            pending_retired_sets,
+            pending_retired_textures,
+            samplers,
+            texture_images,
+            next_native_tex_id,
+        } = self;
+
+        let components_copy = components.clone();
+        let remake = |image: object::Image| {
+            let sampler = Self::get_sampler(samplers, texture_options, device);
+            let view = image
+                .get_view(
+                    &object::ImageViewCreateInfo {
+                        view_type: vk::ImageViewType::T2D,
+                        format: image.get_create_info().format,
+                        components: components_copy.clone(),
+                        subresource_range: image.get_whole_subresource_range(),
+                    },
+                    GenerationId::NEVER,
+                )
+                .unwrap();
+            let set = set_allocator.allocate(view, sampler, &desc_layout, device);
+
+            TextureImage {
+                image,
+                components: components_copy,
+                set,
+                view,
+                options: texture_options,
+            }
+        };
+
+        match texture_images.entry(id) {
+            Entry::Occupied(mut o) => {
+                let v = o.get_mut();
+                if image.get_pointer_identity() == v.image.get_pointer_identity()
+                    && components == v.components
+                    && texture_options == v.options
+                {
+                    return;
+                } else {
+                    pending_retired_sets.push(v.set);
+                    std::ptr::drop_in_place(v);
+                    std::ptr::write(v, remake(image))
+                }
+            }
+            Entry::Vacant(v) => {
+                let value = remake(image);
+                v.insert(value);
+            }
+        }
     }
 }
