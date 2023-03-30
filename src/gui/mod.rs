@@ -136,7 +136,11 @@ impl WindowState {
         let mut inner = self.inner_mut();
         match &event {
             WinitEvent::WindowEvent { window_id, event } => {
+                let mut allow_consumed = true;
                 match event {
+                    winit::event::WindowEvent::MouseWheel { .. } => {
+                        allow_consumed = false;
+                    }
                     &winit::event::WindowEvent::MouseInput {
                         device_id,
                         state,
@@ -150,7 +154,7 @@ impl WindowState {
                 }
 
                 let response = inner.egui_winit.on_event(&self.egui, &event);
-                if response.consumed {
+                if response.consumed && allow_consumed {
                     return;
                 }
             }
