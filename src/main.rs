@@ -25,7 +25,7 @@ use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
-use gui::{egui_icon_font_family, GuiControl, GuiResult, FONT_BYTES};
+use gui::{egui_icon_font_family, GuiControl, GuiOuput, WindowState, FONT_BYTES};
 use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
 use parse::math_into_glsl;
 use pumice::{util::ApiLoadConfig, vk};
@@ -86,6 +86,7 @@ fn main() {
 
         let (surface, device, queue) = make_device(&window);
         let swapchain = make_swapchain(&window, surface, &device);
+        let window_state = WindowState::new(window, &event_loop);
 
         let modules = ShaderModules::new(
             // ShaderModulesConfig::WatchStdin,
@@ -104,18 +105,8 @@ fn main() {
             .build();
 
         let frame_data: Arc<Mutex<FrameData>> = Arc::new(Mutex::new(FrameData::default()));
-
         let mut prev = std::time::Instant::now();
-        let mut mouse_left_pressed = false;
-        let mut mouse_right_pressed = false;
-
         let mut graph: Option<CompiledGraph> = None;
-
-        let context = Arc::new(egui::Context::default());
-        set_fonts(&context);
-        // context.fonts_mut(|fonts| fonts.unwrap().get)
-        let mut winit = egui_winit::State::new(&event_loop);
-        winit.set_max_texture_side(8192);
 
         let mut gui = GuiControl::new(
             modules.event_sender(),
@@ -138,194 +129,159 @@ fn main() {
         let mut cache_option = Some(cache);
 
         let mut first = true;
-
         let mut inner_size = None;
 
         event_loop.run(move |event, _, control_flow| {
-            if let Event::WindowEvent { window_id, event } = &event {
-                let response = winit.on_event(&context, &event);
-                if response.consumed {
-                    return;
-                }
-            }
-
             let mut device = device_option.as_mut().unwrap();
             let mut swapchain = swapchain_option.as_mut().unwrap();
             let mut modules = modules_option.as_mut().unwrap();
             let mut cache = cache_option.as_mut().unwrap();
 
-            match event {
-                Event::DeviceEvent { device_id, event } => match event {
-                    DeviceEvent::MouseMotion { delta: (x, y) } => {
-                        let m = 0.3;
-                        if mouse_left_pressed {
-                            camera
-                                .driver_mut::<YawPitchZUp>()
-                                .rotate_yaw_pitch(x as f32 * m, y as f32 * m);
+            window_state.process_event(event);
+            let window = window_state.window();
+
+            for event in window_state.drain_events() {
+                match event {
+                    Event::WindowEvent { event, window_id } => match event {
+                        WindowEvent::CloseRequested if window_id == window.id() => {
+                            control_flow.set_exit();
                         }
-                    }
-                    _ => {}
-                },
-                Event::WindowEvent { event, window_id } => match event {
-                    WindowEvent::CloseRequested if window_id == window.id() => {
-                        control_flow.set_exit();
-                    }
-                    WindowEvent::Resized(size) => {
-                        let extent = vk::Extent2D {
-                            width: size.width,
-                            height: size.height,
-                        };
-                        swapchain.surface_resized(extent);
-                    }
-                    WindowEvent::MouseWheel { delta, .. } => {
-                        let delta = match delta {
-                            MouseScrollDelta::LineDelta(_, y) => y,
-                            MouseScrollDelta::PixelDelta(p) => p.y as f32,
-                        };
-                        camera.driver_mut::<Arm>().offset.z -= delta * 2.0;
-                    }
-                    WindowEvent::MouseInput {
-                        device_id,
-                        state,
-                        button,
-                        ..
-                    } => {
-                        let pressed = state == ElementState::Pressed;
-                        match button {
-                            MouseButton::Left => mouse_left_pressed = pressed,
-                            MouseButton::Right => mouse_right_pressed = pressed,
-                            _ => {}
+                        WindowEvent::Resized(size) => {
+                            let extent = vk::Extent2D {
+                                width: size.width,
+                                height: size.height,
+                            };
+                            swapchain.surface_resized(extent);
                         }
+                        WindowEvent::MouseWheel { delta, .. } => {
+                            let delta = match delta {
+                                MouseScrollDelta::LineDelta(_, y) => y,
+                                MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                            };
+                            camera.driver_mut::<Arm>().offset.z -= delta * 2.0;
+                        }
+                        _ => {}
+                    },
+                    Event::MainEventsCleared => {
+                        window.request_redraw();
                     }
-                    _ => {}
-                },
-                Event::MainEventsCleared => {
-                    window.request_redraw();
-                }
-                Event::RedrawRequested(_) => {
-                    let dt = prev.elapsed().as_secs_f32();
-                    camera.update(dt);
+                    Event::RedrawRequested(_) => {
+                        let dt = prev.elapsed().as_secs_f32();
+                        camera.update(dt);
 
-                    prev = std::time::Instant::now();
+                        prev = std::time::Instant::now();
 
-                    let mut exit = false;
-                    let mut rebuild_graph = false;
+                        let mut exit = false;
+                        let mut rebuild_graph = false;
 
-                    match modules.poll() {
-                        PollResult::Recreate => rebuild_graph = true,
-                        PollResult::Skip => return,
-                        PollResult::Ok if graph.is_none() => rebuild_graph = true,
-                        PollResult::Ok => {}
-                        PollResult::Exit => exit = true,
-                    }
+                        match modules.poll() {
+                            PollResult::Recreate => rebuild_graph = true,
+                            PollResult::Skip => return,
+                            PollResult::Ok if graph.is_none() => rebuild_graph = true,
+                            PollResult::Ok => {}
+                            PollResult::Exit => exit = true,
+                        }
 
-                    let size = window.inner_size();
-                    if let Some(graph) = graph.as_mut() {
-                        if !(window.is_visible() == Some(false)
-                            || size.width == 0
-                            || size.height == 0)
-                        {
-                            let new_input = winit.take_egui_input(&window);
-                            let pixels_per_point = new_input
-                                .pixels_per_point
-                                .unwrap_or(winit.pixels_per_point());
-                            context.begin_frame(new_input);
-                            let response = gui.ui(&context, &window);
-                            let output = context.end_frame();
-                            winit.handle_platform_output(&window, &context, output.platform_output);
-                            let clipped_meshes = context.tessellate(output.shapes);
-
-                            if response.control_flow == GuiResult::Exit {
-                                exit = true;
-                            }
-
-                            if Some(response.inner_image_size) != inner_size {
-                                inner_size = Some(response.inner_image_size);
-                                rebuild_graph = true;
-                            }
-
-                            let m = 0.3;
-                            if mouse_left_pressed {
-                                let egui::Vec2 { x, y } = response.drag_delta;
-                                camera
-                                    .driver_mut::<YawPitchZUp>()
-                                    .rotate_yaw_pitch(x * m, y * m);
-                            }
-
+                        let size = window.inner_size();
+                        if let Some(graph) = graph.as_mut() {
+                            if !(window.is_visible() == Some(false)
+                                || size.width == 0
+                                || size.height == 0)
                             {
-                                let mut lock = frame_data.lock().unwrap();
-                                lock.camera = camera.final_transform;
-                                lock.primitives = clipped_meshes;
-                                lock.textures_delta.append(output.textures_delta);
-                                lock.pixels_per_point = pixels_per_point;
-                            }
+                                let output = window_state.gui_frame(|window| gui.ui(window));
 
-                            let result = graph.run(GraphRunConfig {
-                                swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
-                                acquire_swapchain_with_fence: false,
-                                // we need to recreate some images if the swapchain size changed
-                                return_after_swapchain_recreate: true,
-                            });
+                                if output.exit_requested {
+                                    exit = true;
+                                }
 
-                            match result {
-                                GraphRunStatus::Ok => {}
-                                GraphRunStatus::SwapchainAcquireTimeout => {}
-                                GraphRunStatus::SwapchainRecreated => {
+                                let (new_inner_size, drag_delta) = output.inner;
+                                if Some(new_inner_size) != inner_size {
+                                    inner_size = Some(new_inner_size);
                                     rebuild_graph = true;
                                 }
-                            }
 
-                            if let Some(remaining) =
-                                Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
-                            {
-                                if !rebuild_graph {
-                                    std::thread::sleep(remaining);
+                                if window_state.mouse_state().left {
+                                    let m = 0.3;
+                                    camera
+                                        .driver_mut::<YawPitchZUp>()
+                                        .rotate_yaw_pitch(drag_delta.x * m, drag_delta.y * m);
+                                }
+
+                                {
+                                    let mut lock = frame_data.lock().unwrap();
+                                    lock.camera = camera.final_transform;
+                                    lock.primitives = output.primitives;
+                                    lock.textures_delta.append(output.textures_delta);
+                                    lock.pixels_per_point = window_state.pixels_per_point();
+                                }
+
+                                let result = graph.run(GraphRunConfig {
+                                    swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
+                                    acquire_swapchain_with_fence: false,
+                                    // we need to recreate some images if the swapchain size changed
+                                    return_after_swapchain_recreate: true,
+                                });
+
+                                match result {
+                                    GraphRunStatus::Ok => {}
+                                    GraphRunStatus::SwapchainAcquireTimeout => {}
+                                    GraphRunStatus::SwapchainRecreated => {
+                                        rebuild_graph = true;
+                                    }
+                                }
+
+                                if let Some(remaining) =
+                                    Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
+                                {
+                                    if !rebuild_graph {
+                                        std::thread::sleep(remaining);
+                                    }
                                 }
                             }
                         }
+
+                        device.idle_cleanup_poll();
+
+                        if rebuild_graph && !exit {
+                            let result = make_graph(
+                                &swapchain,
+                                inner_size.unwrap_or([512; 2]),
+                                queue,
+                                frame_data.clone(),
+                                &mut modules,
+                                &mut compiler,
+                                &mut cache,
+                                window_state.ctx().clone(),
+                                &device,
+                            );
+
+                            match result {
+                                Ok(ok) => {
+                                    graph = Some(ok);
+                                }
+                                Err(err) => {
+                                    eprintln!("Graph compilation error:\n{err}");
+                                }
+                            };
+                        }
+
+                        if exit {
+                            control_flow.set_exit();
+                        }
                     }
+                    Event::LoopDestroyed => {
+                        std::process::exit(0);
 
-                    device.idle_cleanup_poll();
-
-                    if rebuild_graph && !exit {
-                        let result = make_graph(
-                            &swapchain,
-                            inner_size.unwrap_or([512; 2]),
-                            queue,
-                            frame_data.clone(),
-                            &mut modules,
-                            &mut compiler,
-                            &mut cache,
-                            context.clone(),
-                            &device,
-                        );
-
-                        match result {
-                            Ok(ok) => {
-                                graph = Some(ok);
-                            }
-                            Err(err) => {
-                                eprintln!("Graph compilation error:\n{err}");
-                            }
-                        };
+                        drop(graph.take());
+                        drop(swapchain_option.take());
+                        drop(modules_option.take());
+                        drop(cache_option.take());
+                        let device = device_option.take().unwrap();
+                        device.drain_work();
+                        device.attempt_destroy().unwrap();
                     }
-
-                    if exit {
-                        control_flow.set_exit();
-                    }
+                    _ => (),
                 }
-                Event::LoopDestroyed => {
-                    std::process::exit(0);
-
-                    drop(graph.take());
-                    drop(swapchain_option.take());
-                    drop(modules_option.take());
-                    drop(cache_option.take());
-                    let device = device_option.take().unwrap();
-                    device.drain_work();
-                    device.attempt_destroy().unwrap();
-                }
-                _ => (),
             }
         });
     }
@@ -1437,21 +1393,4 @@ unsafe fn make_swapchain(
     };
 
     device.create_swapchain(info).unwrap()
-}
-
-fn set_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-
-    fonts.font_data.insert(
-        "MFG Labs icons".to_owned(),
-        egui::FontData::from_static(FONT_BYTES),
-    );
-
-    fonts
-        .families
-        .entry(egui_icon_font_family())
-        .or_default()
-        .push("MFG Labs icons".to_owned());
-
-    ctx.set_fonts(fonts);
 }

@@ -11,10 +11,7 @@ use std::{
     sync::{mpsc::Sender, Arc, Mutex},
 };
 
-use super::{
-    icons,
-    window::{custom_window_frame, GuiResult},
-};
+use super::{decorations::custom_window_frame, icons, WindowState};
 
 pub fn icon_button(ui: &mut egui::Ui, icon: char) -> egui::Response {
     egui::Label::new(icon_text(icon, 12.5))
@@ -85,11 +82,11 @@ enum ControlKind {
     Center,
     Interval,
 }
-
-pub struct WindowResult {
+#[derive(Default)]
+pub struct GuiOuput {
+    pub should_exit: bool,
+    pub injected_events: Vec<winit::event::Event<'static, ()>>,
     pub drag_delta: egui::Vec2,
-    pub inner_image_size: [u32; 2],
-    pub control_flow: GuiResult,
 }
 
 pub struct GuiControl {
@@ -140,21 +137,19 @@ impl GuiControl {
             open_settings: false,
         }
     }
-    pub fn ui(&mut self, ctx: &egui::Context, window: &winit::window::Window) -> WindowResult {
+    pub fn ui(&mut self, window: &WindowState) -> ([u32; 2], egui::Vec2) {
         let mut new_index = None;
         let mut size = None;
-        let mut drag_delta = egui::Vec2::ZERO;
+        let mut drag = egui::Vec2::ZERO;
+        let mut cog_corner = egui::Pos2::ZERO;
 
-        let result = custom_window_frame(
-            ctx,
+        custom_window_frame(
             window,
-            "Emil",
+            "",
             |ui| {
-                if egui::Label::new(icon_text(icons::COG, 13.5))
-                    .sense(egui::Sense::click())
-                    .ui(ui)
-                    .clicked()
-                {
+                let cog_response = icon_button(ui, icons::COG);
+                cog_corner = cog_response.rect.left_bottom();
+                if cog_response.clicked() {
                     self.open_settings ^= true;
                 }
 
@@ -198,26 +193,17 @@ impl GuiControl {
                     egui::Color32::WHITE,
                 );
                 ui.painter().add(rect);
-                let response = ui.allocate_rect(
-                    remaining,
-                    egui::Sense {
-                        click: true,
-                        drag: true,
-                        focusable: true,
-                    },
-                );
-                let response = ui.interact(all, egui::Id::new("drag_area"), egui::Sense::click());
-                drag_delta = response.drag_delta();
 
-                if response.drag_started() {
-                    eprintln!("Bbbbbbb");
-                }
-                if response.clicked() {
-                    eprintln!("Aaaaaaa");
-                }
+                let response = ui.interact(
+                    all,
+                    egui::Id::new("drag_area"),
+                    egui::Sense::click_and_drag(),
+                );
+                drag = response.drag_delta();
             },
         );
 
+        let ctx = window.ctx();
         let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
             ctx,
             egui::Id::new("settings_popup"),
@@ -239,7 +225,7 @@ impl GuiControl {
         if state.openness(ctx) > 0.01 {
             egui::Window::new("")
                 .id(egui::Id::new("settings"))
-                .anchor(egui::Align2::LEFT_TOP, (4.0, 4.0 + 32.0))
+                .fixed_pos(cog_corner + egui::vec2(-3.5, 13.0))
                 .auto_sized()
                 .title_bar(false)
                 .open(&mut self.open_settings)
@@ -290,10 +276,6 @@ impl GuiControl {
         let size = size.unwrap().size();
         let size = [size.x.round() as u32, size.y.round() as u32];
 
-        WindowResult {
-            drag_delta,
-            inner_image_size: size,
-            control_flow: result,
-        }
+        (size, drag)
     }
 }
