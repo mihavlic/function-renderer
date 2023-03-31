@@ -122,24 +122,22 @@ fn title_bar_ui(
         window.start_window_drag();
     }
 
+    let rect_square_size = egui::Vec2::splat(32.0);
     let right_rect = egui::Rect {
-        min: title_bar_rect.right_top() - egui::vec2(32.0, 0.0),
+        min: title_bar_rect.max - rect_square_size,
         max: title_bar_rect.max,
     };
-    let left_vec = egui::Rect {
-        min: title_bar_rect.min,
-        max: right_rect.left_bottom(),
-    };
+
+    ui.allocate_ui_at_rect(title_bar_rect, |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add_space(8.0);
+            title_contents(ui);
+        });
+    });
     ui.allocate_ui_at_rect(right_rect, |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
             handle_titlebar_interaction(ui, window);
-        });
-    });
-    ui.allocate_ui_at_rect(left_vec, |ui| {
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add_space(8.0);
-            title_contents(ui);
         });
     });
 }
@@ -175,7 +173,7 @@ fn handle_resize_borders(
         return None;
     };
 
-    // if the cursor is inside the *content* rext, there is no resizing to be done
+    // if the cursor is inside the *content* rect, there is no resizing to be done
     if rect.contains(pos) {
         return None;
     }

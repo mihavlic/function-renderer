@@ -434,11 +434,12 @@ unsafe fn make_graph(
             "resolve",
         )
     });
+    let vk::Extent2D { width, height } = swapchain.get_extent();
     let window_color_image = (MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1).then(|| {
         create_image(
             vk::Format::B8G8R8A8_UNORM,
             MSAA_SAMPLE_COUNT,
-            object::Extent::D2(function_extent[0], function_extent[1]),
+            object::Extent::D2(width, height),
             vk::ImageUsageFlags::COLOR_ATTACHMENT,
             "resolve",
         )
@@ -1301,7 +1302,7 @@ unsafe fn make_swapchain(
         array_layers: 1,
         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
         pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
-        composite_alpha: vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
+        composite_alpha: vk::CompositeAlphaFlagsKHR::INHERIT,
         present_mode,
         clipped: true,
     };

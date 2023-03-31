@@ -147,37 +147,52 @@ impl GuiControl {
             window,
             "",
             |ui| {
-                let cog_response = icon_button(ui, icons::COG);
-                cog_corner = cog_response.rect.left_bottom();
-                if cog_response.clicked() {
-                    self.open_settings ^= true;
-                }
+                let all = ui.available_rect_before_wrap();
+                let rect_square_size = egui::Vec2::splat(32.0);
+                let left_rect = egui::Rect {
+                    min: all.min,
+                    max: all.min + rect_square_size,
+                };
+                let middle = all.shrink2((32.0, 3.0).into());
 
-                if egui::TextEdit::singleline(&mut self.edit)
-                    .font(egui::TextStyle::Monospace)
-                    .show(ui)
-                    .response
-                    .lost_focus()
-                {
-                    match parse_math(&self.edit) {
-                        Ok(_) => {
-                            self.history_index = self.history.len();
-                            self.history.push(self.edit.clone());
+                ui.allocate_ui_at_rect(middle, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.add_space((middle.width() - 320.0) / 2.0);
+                        if egui::TextEdit::singleline(&mut self.edit)
+                            .font(egui::TextStyle::Monospace)
+                            .show(ui)
+                            .response
+                            .lost_focus()
+                        {
+                            match parse_math(&self.edit) {
+                                Ok(_) => {
+                                    self.history_index = self.history.len();
+                                    self.history.push(self.edit.clone());
 
-                            self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
-                            self.error = None;
+                                    self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
+                                    self.error = None;
+                                }
+                                Err(e) => {
+                                    self.error = Some(e.to_string());
+                                }
+                            }
                         }
-                        Err(e) => {
-                            self.error = Some(e.to_string());
+                        if icon_button(ui, icons::LEFT).clicked() {
+                            new_index = self.history_index.checked_sub(1);
                         }
+                        if icon_button(ui, icons::RIGHT).clicked() {
+                            new_index = self.history_index.checked_add(1);
+                        }
+                    });
+                });
+
+                ui.allocate_ui_at_rect(left_rect, |ui| {
+                    let cog_response = icon_button(ui, icons::COG);
+                    cog_corner = cog_response.rect.left_bottom();
+                    if cog_response.clicked() {
+                        self.open_settings ^= true;
                     }
-                }
-                if icon_button(ui, icons::LEFT).clicked() {
-                    new_index = self.history_index.checked_sub(1);
-                }
-                if icon_button(ui, icons::RIGHT).clicked() {
-                    new_index = self.history_index.checked_add(1);
-                }
+                });
             },
             |ui| {
                 let all = ui.available_rect_before_wrap();
