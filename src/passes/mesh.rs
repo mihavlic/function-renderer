@@ -1,11 +1,18 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
 
 use dolly::{prelude::RightHanded, rig::CameraRig, transform::Transform};
 use glam::{EulerRot, Mat4, Quat, Vec3, Vec3Swizzles};
 use graph::{
     graph::{
-        compile::GraphContext, execute::GraphExecutor, record::GraphPassBuilder,
-        task::GraphicsPipelinePromise, GraphBuffer, GraphImage,
+        compile::GraphContext,
+        descriptors::{DescBuffer, DescSetBuilder, DescriptorData},
+        execute::GraphExecutor,
+        record::GraphPassBuilder,
+        task::GraphicsPipelinePromise,
+        GraphBuffer, GraphImage,
     },
     object::{self, ConcreteGraphicsPipeline, Extent, GraphicsPipeline, RenderPassMode},
     passes::{CreatePass, RenderPass},
@@ -278,14 +285,21 @@ impl RenderPass for CreatedMeshPass {
             }
         };
 
-        d.cmd_push_constants(
-            cmd,
-            self.pipeline.get_object().get_create_info().layout.raw(),
-            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-            0,
-            std::mem::size_of::<PushConstants>() as u32,
-            (&push) as *const _ as *const _,
-        );
+        let uniform = executor.allocate_uniform_element(&push);
+
+        let layout = &self.pipeline.get_object().get_descriptor_set_layouts()[0];
+        DescSetBuilder::new(layout)
+            .update_whole(&[DescriptorData::Buffer(DescBuffer {
+                buffer: uniform.buffer,
+                dynamic_offset: Some(uniform.dynamic_offset),
+                ..Default::default()
+            })])
+            .finish(executor)
+            .bind(
+                vk::PipelineBindPoint::GRAPHICS,
+                &self.pipeline.get_object().get_create_info().layout,
+                executor,
+            );
 
         d.cmd_bind_vertex_buffers(cmd, 0, &[executor.get_buffer(self.info.vertices)], &[8]);
         d.cmd_bind_index_buffer(

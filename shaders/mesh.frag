@@ -1,14 +1,14 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : enable
 
-layout(push_constant, scalar) uniform PushConstant { 
+layout(binding = 0, scalar) uniform FunctionData {
     mat4 model_matrix;
     mat4 projection_matrix;
     vec3 rect_min;
     vec3 rect_max;
     float time;
     int padding;
-} push;
+} data;
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inViewPos;
@@ -49,8 +49,8 @@ void main() {
 
 #if 1
     vec3 normalized_pos = inWorldPos / 63.0;
-    vec3 world_pos = mix(push.rect_min, push.rect_max, normalized_pos);
-    vec4 density_input = vec4(world_pos, push.time);
+    vec3 world_pos = mix(data.rect_min, data.rect_max, normalized_pos);
+    vec4 density_input = vec4(world_pos, data.time);
 
     vec3 world_normal = abs(normalize(gradient_density(density_input, normalized_pos).xyz));
     // for some reson the normals are wrongly swizzled?
