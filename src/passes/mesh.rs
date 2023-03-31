@@ -285,15 +285,11 @@ impl RenderPass for CreatedMeshPass {
             }
         };
 
-        let uniform = executor.allocate_uniform_element(&push);
+        let uniform = executor.allocate_uniform_element::<PushConstants>(&push);
 
         let layout = &self.pipeline.get_object().get_descriptor_set_layouts()[0];
         DescSetBuilder::new(layout)
-            .update_whole(&[DescriptorData::Buffer(DescBuffer {
-                buffer: uniform.buffer,
-                dynamic_offset: Some(uniform.dynamic_offset),
-                ..Default::default()
-            })])
+            .update_whole(&[DescriptorData::Buffer(uniform.as_desc_dynamic())])
             .finish(executor)
             .bind(
                 vk::PipelineBindPoint::GRAPHICS,

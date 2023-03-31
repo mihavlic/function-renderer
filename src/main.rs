@@ -716,11 +716,7 @@ unsafe fn make_graph(
                         buffer: e.get_buffer(indices),
                         ..Default::default()
                     }),
-                    DescriptorData::Buffer(DescBuffer {
-                        buffer: uniform.buffer,
-                        dynamic_offset: Some(uniform.dynamic_offset),
-                        ..Default::default()
-                    }),
+                    DescriptorData::Buffer(uniform.as_desc_dynamic()),
                 ])
                 .finish(e)
                 .into_raw();
@@ -1053,10 +1049,10 @@ unsafe fn make_graph(
                         None,
                     );
 
-                    let function_texture = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
-                        color
-                    } else {
+                    let function_texture = if MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1 {
                         resolve.unwrap()
+                    } else {
+                        color
                     };
                     builder.use_image(
                         function_texture,
@@ -1305,9 +1301,9 @@ unsafe fn make_swapchain(
         array_layers: 1,
         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
         pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
-        composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+        composite_alpha: vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
         present_mode,
-        clipped: false,
+        clipped: true,
     };
 
     device.create_swapchain(info).unwrap()

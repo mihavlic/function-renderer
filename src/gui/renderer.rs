@@ -146,7 +146,7 @@ impl Renderer {
             // color
             let color_ref = vk::AttachmentReference {
                 attachment: 0,
-                layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
             };
             attachments.push(vk::AttachmentDescription {
                 format,
@@ -174,7 +174,7 @@ impl Renderer {
             if resolve_enable {
                 resolve_ref = Some(vk::AttachmentReference {
                     attachment: 1,
-                    layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
                 });
                 attachments.push(vk::AttachmentDescription {
                     format,
@@ -899,7 +899,7 @@ impl Renderer {
         let mut index_offset = 0;
 
         let mut current_texture = None;
-        let mut barrierd_images = DefaultAhashSet::default();
+        let mut current_scissor = None;
 
         // draw meshes
         for egui::ClippedPrimitive {
@@ -916,53 +916,6 @@ impl Renderer {
             }
 
             if let Some(texture) = self.texture_images.get(&mesh.texture_id) {
-                // even though we're not using a globally stable identity, we hold onto every image through
-                // self.texture_images
-                if barrierd_images.insert(texture.image.get_pointer_identity()) {
-                    texture.image.access_mutable(
-                        |d| d.get_mutable_state(),
-                        |m| {
-                            let state = m.synchronization_state().get_unchecked_mut();
-                            device.retain_active_submissions(&mut state.access);
-                            // assert!(
-                            //     state.access.is_empty() || state.access.as_slice() == &[submission],
-                            //     "egui texture images must be accessed only in this submission {} {}", state.access.is_empty() ,state.access.as_slice() == &[submission]
-                            // );
-
-                            // this path is really only
-                            if state.layout.unwrap() != vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL {
-                                let barrier = vk::ImageMemoryBarrier2KHR {
-                                    // texture deltas have their layout are transitioned immediatelly after the copy
-                                    // so this path only gets taken by user images, it's their job to synchronize access to such images
-                                    src_stage_mask: vk::PipelineStageFlags2KHR::NONE,
-                                    src_access_mask: vk::AccessFlags2KHR::NONE,
-                                    dst_stage_mask: vk::PipelineStageFlags2KHR::FRAGMENT_SHADER,
-                                    dst_access_mask: vk::AccessFlags2KHR::SHADER_READ,
-                                    old_layout: state.layout.unwrap(),
-                                    new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                                    image: texture.image.raw(),
-                                    subresource_range: texture.image.get_whole_subresource_range(),
-                                    ..Default::default()
-                                };
-                                let dependency_info = vk::DependencyInfoKHR {
-                                    image_memory_barrier_count: 1,
-                                    p_image_memory_barriers: &barrier,
-                                    ..Default::default()
-                                };
-                                d.cmd_pipeline_barrier_2_khr(cmd, &dependency_info);
-
-                                if state.access.is_empty() {
-                                    state.access.push(submission);
-                                }
-                                state.layout =
-                                    TypeSome::new_some(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-                            }
-                        },
-                    );
-                }
-
                 if current_texture != Some(mesh.texture_id) {
                     d.cmd_bind_descriptor_sets(
                         cmd,
@@ -996,38 +949,42 @@ impl Renderer {
             vertex_buffer_ptr.copy_from_nonoverlapping(mesh.vertices.as_ptr(), mesh.vertices.len());
             index_buffer_ptr.copy_from_nonoverlapping(mesh.indices.as_ptr(), mesh.indices.len());
 
-            // Transform clip rect to physical pixels:
-            let clip_min_x = pixels_per_point * clip_rect.min.x;
-            let clip_min_y = pixels_per_point * clip_rect.min.y;
-            let clip_max_x = pixels_per_point * clip_rect.max.x;
-            let clip_max_y = pixels_per_point * clip_rect.max.y;
+            if Some(clip_rect) != current_scissor {
+                current_scissor = Some(clip_rect);
+                // Transform clip rect to physical pixels:
+                let clip_min_x = pixels_per_point * clip_rect.min.x;
+                let clip_min_y = pixels_per_point * clip_rect.min.y;
+                let clip_max_x = pixels_per_point * clip_rect.max.x;
+                let clip_max_y = pixels_per_point * clip_rect.max.y;
 
-            // Round to integer:
-            let clip_min_x = clip_min_x.round() as i32;
-            let clip_min_y = clip_min_y.round() as i32;
-            let clip_max_x = clip_max_x.round() as i32;
-            let clip_max_y = clip_max_y.round() as i32;
+                // Round to integer:
+                let clip_min_x = clip_min_x.round() as i32;
+                let clip_min_y = clip_min_y.round() as i32;
+                let clip_max_x = clip_max_x.round() as i32;
+                let clip_max_y = clip_max_y.round() as i32;
 
-            // Clamp:
-            let clip_min_x = clip_min_x.clamp(0, width as i32);
-            let clip_min_y = clip_min_y.clamp(0, height as i32);
-            let clip_max_x = clip_max_x.clamp(clip_min_x, width as i32);
-            let clip_max_y = clip_max_y.clamp(clip_min_y, height as i32);
+                // Clamp:
+                let clip_min_x = clip_min_x.clamp(0, width as i32);
+                let clip_min_y = clip_min_y.clamp(0, height as i32);
+                let clip_max_x = clip_max_x.clamp(clip_min_x, width as i32);
+                let clip_max_y = clip_max_y.clamp(clip_min_y, height as i32);
 
-            d.cmd_set_scissor(
-                cmd,
-                0,
-                &[vk::Rect2D {
-                    offset: vk::Offset2D {
-                        x: clip_min_x,
-                        y: clip_min_y,
-                    },
-                    extent: vk::Extent2D {
-                        width: (clip_max_x - clip_min_x).max(0) as u32,
-                        height: (clip_max_y - clip_min_y).max(0) as u32,
-                    },
-                }],
-            );
+                d.cmd_set_scissor(
+                    cmd,
+                    0,
+                    &[vk::Rect2D {
+                        offset: vk::Offset2D {
+                            x: clip_min_x,
+                            y: clip_min_y,
+                        },
+                        extent: vk::Extent2D {
+                            width: (clip_max_x - clip_min_x).max(0) as u32,
+                            height: (clip_max_y - clip_min_y).max(0) as u32,
+                        },
+                    }],
+                );
+            }
+
             d.cmd_draw_indexed(
                 cmd,
                 mesh.indices.len() as u32,
