@@ -20,7 +20,7 @@ pub const MIN_MARGIN: f32 = 0.5;
 pub const MAX_MARGIN: f32 = 2.5;
 
 #[rustfmt::skip]
-pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
+pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, String)> {
     let mut tape = Tape::new();
     
     let x = tape.add(SsaExpression::Builtin(BuiltingVariable::X));
@@ -33,39 +33,45 @@ pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
     let zn = tape.add(SsaExpression::Builtin(BuiltingVariable::Z_normalized));
     
     // select between the function having a shell at the edges of the evaluated range or not
-    let min_margin =  MIN_MARGIN / 63.0;
+    let min_margin = MIN_MARGIN / 63.0;
     let max_margin = 1.0 - MAX_MARGIN / 63.0;
 
     let density = {
         let expr = parse_math(expr)?;
         tape.add_ast(&expr)
     };
-
-    let box_sdf = {
-        let expr = format!("
-            max(
+    
+    let last = if thickness {
+        let box_sdf = {
+            let expr = format!("
                 max(
-                    max({min_margin} - x_normalized, x_normalized - {max_margin}),
-                    max({min_margin} - y_normalized, y_normalized - {max_margin})
-                ),
-                max({min_margin} - z_normalized, z_normalized - {max_margin})
-            )
-        ");
-        let expr = parse_math(&expr).unwrap();
-        tape.add_ast(&expr)
+                    max(
+                        max({min_margin} - x_normalized, x_normalized - {max_margin}),
+                        max({min_margin} - y_normalized, y_normalized - {max_margin})
+                    ),
+                    max({min_margin} - z_normalized, z_normalized - {max_margin})
+                )
+            ");
+            let expr = parse_math(&expr).unwrap();
+            tape.add_ast(&expr)
+        };
+
+        let density = tape.add(SsaExpression::Unary { op: UnaryOperation::Neg, child: density });
+
+        // we want to apply the box sdf only where it's positive - ie. outside the box (there is some
+        // conservative bias) otherwise the interpolated position may get \"under\" the implicit surface
+        // where the box sdf density may be higher and so it will also get its derivative which leads to
+        // visual artifacts  
+        let epsilon = tape.add(SsaExpression::Constant(TotalF32(0.001)));
+        let biased = tape.add(SsaExpression::Binary { op: BinaryOperation::Add, left: box_sdf, right: epsilon });
+        let last = tape.add(SsaExpression::Ternary { op: parse::TernaryOperation::Select, a: biased, b: box_sdf, c: density });
+
+        last
+    } else {
+        density
     };
 
-    let density = tape.add(SsaExpression::Unary { op: UnaryOperation::Neg, child: density });
-
-    // we want to apply the box sdf only where it's positive - ie. outside the box (there is some
-    // conservative bias) otherwise the interpolated position may get \"under\" the implicit surface
-    // where the box sdf density may be higher and so it will also get its derivative which leads to
-    // visual artifacts  
-    let epsilon = tape.add(SsaExpression::Constant(TotalF32(0.001)));
-    let biased = tape.add(SsaExpression::Binary { op: BinaryOperation::Add, left: box_sdf, right: epsilon });
-    let last = tape.add(SsaExpression::Ternary { op: parse::TernaryOperation::Select, a: biased, b: box_sdf, c: density });
-
-    let density = {
+    let function = {
         let statements = tape.write_glsl(false).replace("\n", "\n    ");
         format!(
             "float density(vec4 d, vec3 n) {{    
@@ -78,14 +84,13 @@ pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
                 float {yn} = n.y;
                 float {zn} = n.z;
 
-                {statements}
-                
+                {statements}                
                 return {last};
             }}"
         ).replace("\n            ", "\n")
     };
 
-    let diff = {
+    let gradient = {
         let statements = tape.write_glsl(true).replace("\n", "\n    ");
         format!(
             "vec4 gradient_density(vec4 d, vec3 n) {{    
@@ -99,13 +104,12 @@ pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
                 float {zn} = n.z;
 
                 {statements}
-
                 return vec4({last}d, {last});
             }}"
         ).replace("\n            ", "\n")
     };
 
-    Ok((density, diff))
+    Ok((function, gradient))
 }
 
 pub struct GlslCompiler {

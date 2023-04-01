@@ -139,14 +139,27 @@ impl Tape {
                         match op {
                             BinaryOperation::Exp => {
                                 if let Some(v) = r_value {
-                                    if v > 1.99 && v < 2.01 {
-                                        self.mark_used(left);
-
-                                        break 'make_expr SsaExpression::Binary {
-                                            op: BinaryOperation::Mul,
-                                            left: left,
-                                            right: left,
-                                        };
+                                    if v.abs() < f32::EPSILON {
+                                        break 'make_expr SsaExpression::Constant(TotalF32(1.0));
+                                    }
+                                    if v.abs() - 1.0 < f32::EPSILON {
+                                        return left;
+                                    }
+                                    if v.fract().abs() < f32::EPSILON {
+                                        let count = v.round() as u32;
+                                        if 1 < count && count <= 4 || count % 2 == 1 {
+                                            let mut prev = left;
+                                            for i in 0..(count - 1) {
+                                                self.mark_used(left);
+                                                left = self.add_internal(SsaExpression::Binary {
+                                                    op: BinaryOperation::Mul,
+                                                    left,
+                                                    right: prev,
+                                                });
+                                            }
+                                            self.mark_used(left);
+                                            return left;
+                                        }
                                     }
                                 }
                             }
@@ -313,9 +326,9 @@ impl Tape {
                             BinaryOperation::Exp => {
                                 if let Some(b) = self.get_constant_value(b) {
                                     let b_1 = b - 1.0;
-                                    write!(f, "vec3 {dout} = {b} * pow({a}, {b_1}) * {da}")
+                                    write!(f, "vec3 {dout} = {da} * {b} * pow({a}, {b_1})")
                                 } else if let Some(a) = self.get_constant_value(a)  {
-                                    write!(f, "vec3 {dout} = {o} * log({b}) * {db}")
+                                    write!(f, "vec3 {dout} = {db} * {o} * log({b})")
                                 } else {
                                     write!(f, "vec3 {dout} = 0.0 /* TODO */")
                                 }

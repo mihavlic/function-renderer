@@ -55,7 +55,6 @@ pub fn custom_window_frame(
                 rect.max.y = rect.min.y + title_bar_height;
                 rect
             };
-            title_bar_ui(ui, window, title_bar_rect, title, title_contents);
 
             // Add the contents:
             let content_rect = {
@@ -68,6 +67,7 @@ pub fn custom_window_frame(
 
             let mut content_ui = ui.child_ui(content_rect, *ui.layout());
             add_contents(&mut content_ui);
+            title_bar_ui(ui, window, title_bar_rect, title, title_contents);
 
             if let Some(dir) = handle_resize_borders(window, app_rect) {
                 if ui.input(|i| i.pointer.primary_clicked()) {

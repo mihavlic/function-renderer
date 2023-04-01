@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::{io, slice};
 
-use crate::parse::{math_into_glsl, parse_math, GlslCompiler};
+use crate::parse::{self, math_into_glsl, parse_math, GlslCompiler};
 use graph::device::debug::LazyDisplay;
 use graph::device::reflection::ReflectedLayout;
 use graph::device::{self, read_spirv, DeviceCreateInfo, QueueFamilySelection};
@@ -59,7 +59,7 @@ struct SimpleFileEntry {
     dirty: bool,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum PollResult {
     Recreate,
     Skip,
@@ -71,8 +71,15 @@ struct StdinWatcherData {
     thread: JoinHandle<()>,
 }
 
+struct DensityFunctionData {
+    original: String,
+    function: String,
+    gradient: String,
+}
+
 pub struct ShaderModules {
-    density_function: Option<(String, String)>,
+    thickness: bool,
+    density_function: Option<DensityFunctionData>,
     modules: HashMap<PathBuf, MetaModuleEntry>,
     simple_files: HashMap<PathBuf, SimpleFileEntry>,
     watcher: notify::RecommendedWatcher,
@@ -92,7 +99,7 @@ pub enum ShaderModulesConfig<'a> {
 }
 
 impl ShaderModules {
-    pub fn new(config: ShaderModulesConfig) -> Self {
+    pub fn new(config: ShaderModulesConfig, thickness: bool) -> Self {
         let (sender, receiver) = mpsc::channel();
 
         let mut sender_copy = sender.clone();
@@ -161,6 +168,7 @@ impl ShaderModules {
         };
 
         let mut s = Self {
+            thickness,
             density_function: None,
             modules: Default::default(),
             simple_files: Default::default(),
@@ -173,7 +181,7 @@ impl ShaderModules {
 
         match config {
             ShaderModulesConfig::Static(str) => {
-                s.density_fn_changed(math_into_glsl(str).unwrap());
+                s.density_fn_changed(str.to_owned()).unwrap();
             }
             ShaderModulesConfig::WatchStdin => {
                 s.stdin = Some(
@@ -191,8 +199,17 @@ impl ShaderModules {
     pub fn event_sender(&self) -> Sender<AsyncEvent> {
         self.sender.clone()
     }
-    fn density_fn_changed(&mut self, new: (String, String)) {
-        self.density_function = Some(new);
+    fn density_fn_changed(&mut self, new: String) -> parse::Result<()> {
+        let (function, gradient) = math_into_glsl(&new, self.thickness)?;
+        self.density_function = Some(DensityFunctionData {
+            original: new,
+            function,
+            gradient,
+        });
+        self.invalidate_all_with_density();
+        Ok(())
+    }
+    pub fn invalidate_all_with_density(&mut self) {
         for m in self.modules.values_mut() {
             if m.needs_density_fn {
                 m.dirty = true;
@@ -217,16 +234,23 @@ impl ShaderModules {
         self.invalidate_file_impl(&path);
     }
     pub fn poll(&mut self) -> PollResult {
-        let mut new_density_functions = None;
+        let mut prev_thickness = self.thickness;
+        let mut new_density_function = None;
         let mut files = Vec::new();
+        let mut status = PollResult::Ok;
         loop {
             match self.receiver.try_recv() {
                 Ok(event) => match event {
                     AsyncEvent::FilesChanged(changed) => files.extend(changed),
-                    AsyncEvent::NewFunction(expr) => {
-                        let new_functions = math_into_glsl(&expr)
-                            .expect("Expressions should be verified before being sent");
-                        new_density_functions = Some(new_functions)
+                    AsyncEvent::NewFunction(expr) => new_density_function = Some(expr),
+                    AsyncEvent::GenerateThickness(thickness) => {
+                        if thickness != self.thickness {
+                            self.thickness = thickness;
+                            status = PollResult::Recreate;
+                            if let Some(data) = &self.density_function {
+                                new_density_function = Some(data.original.to_owned());
+                            }
+                        }
                     }
                     AsyncEvent::Exit => return PollResult::Exit,
                 },
@@ -237,17 +261,15 @@ impl ShaderModules {
             }
         }
 
-        let mut status = PollResult::Ok;
-        if let Some(funs) = new_density_functions {
-            self.density_fn_changed(funs);
+        if self.thickness != prev_thickness {}
+
+        if let Some(new) = new_density_function {
+            self.density_fn_changed(new)
+                .expect("Expressions should be verified before being sent");
             status = PollResult::Recreate;
         } else if self.density_function.is_none() {
-            self.density_fn_changed(math_into_glsl(&"0.0").unwrap());
+            self.density_fn_changed("0.0".to_owned()).unwrap();
         }
-
-        // if self.density_function.is_none() {
-        //     return PollResult::Skip;
-        // }
 
         if !files.is_empty() {
             status = PollResult::Recreate;
@@ -304,11 +326,11 @@ impl ShaderModules {
                 source.contains(DENSITY_FUNCTION_MAGIC) || source.contains(GRADIENT_FUNCTION_MAGIC);
 
             if needs_density_fn {
-                let Some((density, gradient)) = self.density_function.as_ref() else {
+                let Some(DensityFunctionData { original, function, gradient }) = self.density_function.as_ref() else {
                     panic!()
                 };
 
-                source = source.replace(DENSITY_FUNCTION_MAGIC, density);
+                source = source.replace(DENSITY_FUNCTION_MAGIC, function);
                 source = source.replace(GRADIENT_FUNCTION_MAGIC, gradient);
             }
 
@@ -384,6 +406,7 @@ fn send_fun(expr: &str, sender: &Sender<AsyncEvent>) -> bool {
 pub enum AsyncEvent {
     FilesChanged(Vec<PathBuf>),
     NewFunction(String),
+    GenerateThickness(bool),
     Exit,
 }
 

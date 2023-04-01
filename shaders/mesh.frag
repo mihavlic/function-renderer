@@ -47,7 +47,7 @@ void main() {
     vec3 world_normal = normalize(gradient_density(vec4(world_pos, data.time), normalized_pos).xyz);
 
     vec3 color = mix(vec3(1.0), abs(world_normal), 0.6);
-    float cosine = max(dot(data.camera_dir, world_normal), 0.0);
+    float cosine = max(abs(dot(data.camera_dir, world_normal)), 0.0);
     float darken = mix(0.3, 1.0, cosine);
     float line = complete_grid(world_pos, world_normal);
 

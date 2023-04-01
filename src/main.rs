@@ -93,6 +93,7 @@ fn main() {
             // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
             // ShaderModulesConfig::Static("sin(2sqrt(x*x+y*y+z*z)/pi)"),
             ShaderModulesConfig::None,
+            true,
         );
         let cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();

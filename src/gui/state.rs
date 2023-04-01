@@ -6,8 +6,10 @@ use crate::{
 };
 use egui::{Color32, Layout, Ui, Widget};
 use glam::Vec3;
+use graph::storage::DefaultAhashRandomstate;
 use std::{
     any::TypeId,
+    hash::{BuildHasher, Hash, Hasher},
     sync::{mpsc::Sender, Arc, Mutex},
 };
 
@@ -23,26 +25,21 @@ pub fn icon_text(icon: char, size: f32) -> egui::RichText {
     egui::RichText::new(icon).font(egui::FontId::new(size, egui_icon_font_family()))
 }
 
-trait FunctionIntervalControl: 'static {
-    fn init(&mut self, min: Vec3, max: Vec3);
-    fn ui(&mut self, ui: &mut Ui);
-    fn output(&self) -> (Vec3, Vec3);
-}
-
 #[derive(Default)]
 struct CenterControl {
+    density: bool,
     center: Vec3,
     half: f32,
 }
 
-impl FunctionIntervalControl for CenterControl {
+impl CenterControl {
     fn init(&mut self, min: Vec3, max: Vec3) {
         self.center = (min + max) / 2.0;
         let halves = (max - min) / 2.0;
         self.half = halves.max_element();
     }
 
-    fn ui(&mut self, ui: &mut Ui) {
+    fn ui(&mut self, ui: &mut Ui, sender: &Sender<AsyncEvent>) {
         egui::Grid::new("center grid")
             .min_col_width(0.0)
             // .spacing((5.5, 3.0))
@@ -70,6 +67,9 @@ impl FunctionIntervalControl for CenterControl {
                 }
                 ui.end_row();
             });
+        if ui.checkbox(&mut self.density, "thickness").changed() {
+            sender.send(AsyncEvent::GenerateThickness(self.density));
+        }
     }
 
     fn output(&self) -> (Vec3, Vec3) {
@@ -90,14 +90,14 @@ pub struct GuiOuput {
 }
 
 pub struct GuiControl {
+    prev_finished_edit_hash: Option<u64>,
     edit: String,
     sender: Sender<AsyncEvent>,
     error: Option<String>,
     history: Vec<String>,
     history_index: usize,
     frame: Arc<Mutex<FrameData>>,
-    control: Box<dyn FunctionIntervalControl>,
-    control_id: ControlKind,
+    control: CenterControl,
 
     open_settings: bool,
 }
@@ -119,6 +119,7 @@ impl GuiControl {
         }
 
         Self {
+            prev_finished_edit_hash: None,
             edit: initial_history.last().copied().unwrap_or("").to_owned(),
             sender,
             error: None,
@@ -129,11 +130,11 @@ impl GuiControl {
                 .collect(),
             history_index: initial_history.len().saturating_sub(1),
             frame,
-            control: Box::new(CenterControl {
+            control: CenterControl {
                 center: Vec3::splat(0.0),
                 half: 16.0,
-            }),
-            control_id: ControlKind::Center,
+                density: true,
+            },
             open_settings: false,
         }
     }
@@ -155,29 +156,57 @@ impl GuiControl {
                 };
                 let middle = all.shrink2((32.0, 5.0).into());
 
+                ui.allocate_ui_at_rect(left_rect, |ui| {
+                    let cog_response = icon_button(ui, icons::COG);
+                    cog_corner = cog_response.rect.left_bottom();
+                    if cog_response.clicked() {
+                        self.open_settings ^= true;
+                    }
+                });
+
                 ui.allocate_ui_at_rect(middle, |ui| {
                     ui.with_layout(
                         egui::Layout::left_to_right(egui::Align::Center).with_cross_justify(true),
                         |ui| {
                             ui.add_space((middle.width() - 320.0) / 2.0);
+                            let id = egui::Id::new("function_text_input");
                             if egui::TextEdit::singleline(&mut self.edit)
+                                .id(id)
                                 .font(egui::TextStyle::Monospace)
                                 .vertical_align(egui::Align::Center)
                                 .show(ui)
                                 .response
                                 .lost_focus()
                             {
-                                match parse_math(&self.edit) {
-                                    Ok(_) => {
-                                        self.history_index = self.history.len();
-                                        self.history.push(self.edit.clone());
+                                // if we lost focus due to the user pressing enter, take the focus again
+                                // since they aren't probably finished with editing
+                                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                    ui.memory_mut(|m| m.request_focus(id));
+                                }
 
-                                        self.sender
-                                            .send(AsyncEvent::NewFunction(self.edit.clone()));
-                                        self.error = None;
-                                    }
-                                    Err(e) => {
-                                        self.error = Some(e.to_string());
+                                let hash = {
+                                    let mut state = DefaultAhashRandomstate.build_hasher();
+                                    self.edit.trim().hash(&mut state);
+                                    state.finish()
+                                };
+
+                                // do not update the function unless it actually changed (Response::changed doesn't work for TextEdit)
+                                if Some(hash) != self.prev_finished_edit_hash {
+                                    self.prev_finished_edit_hash = Some(hash);
+
+                                    match parse_math(&self.edit) {
+                                        Ok(_) => {
+                                            self.history_index = self.history.len();
+                                            self.history.push(self.edit.clone());
+
+                                            self.sender
+                                                .send(AsyncEvent::NewFunction(self.edit.clone()));
+                                            self.error = None;
+                                        }
+                                        Err(e) => {
+                                            self.error = Some(e.to_string());
+                                            self.open_settings = true;
+                                        }
                                     }
                                 }
                             }
@@ -189,14 +218,6 @@ impl GuiControl {
                             }
                         },
                     );
-                });
-
-                ui.allocate_ui_at_rect(left_rect, |ui| {
-                    let cog_response = icon_button(ui, icons::COG);
-                    cog_corner = cog_response.rect.left_bottom();
-                    if cog_response.clicked() {
-                        self.open_settings ^= true;
-                    }
                 });
             },
             |ui| {
@@ -240,9 +261,9 @@ impl GuiControl {
             },
             ..egui::Frame::window(&ctx.style())
         }
-        .multiply_with_opacity(state.openness(ctx));
+        .multiply_with_opacity(openness);
 
-        if state.openness(ctx) > 0.01 {
+        if openness > 0.01 {
             egui::Window::new("")
                 .id(egui::Id::new("settings"))
                 .fixed_pos(cog_corner + egui::vec2(-3.5, 13.0))
@@ -251,14 +272,11 @@ impl GuiControl {
                 .open(&mut self.open_settings)
                 .frame(frame)
                 .show(ctx, |ui| {
+                    if let Some(e) = self.error.as_ref() {
+                        ui.colored_label(ui.style().visuals.error_fg_color, e);
+                    }
                     state.show_body_unindented(ui, |ui| {
-                        ui.with_layout(Layout::top_down(egui::Align::Min), |ui| {
-                            self.control.ui(ui);
-                        });
-
-                        if let Some(e) = self.error.as_ref() {
-                            ui.colored_label(Color32::RED, e);
-                        }
+                        self.control.ui(ui, &self.sender);
                     });
                 });
         }
