@@ -4,7 +4,7 @@ use std::{
 };
 
 use dolly::{prelude::RightHanded, rig::CameraRig, transform::Transform};
-use glam::{EulerRot, Mat4, Quat, Vec3, Vec3Swizzles};
+use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, Vec3Swizzles, Vec4Swizzles};
 use graph::{
     graph::{
         compile::GraphContext,
@@ -252,12 +252,14 @@ impl RenderPass for CreatedMeshPass {
             self.pipeline.get_handle(),
         );
 
+        #[repr(C, align(16))]
         struct PushConstants {
             model_matrix: Mat4,
             projection_matrix: Mat4,
             rect_min: Vec3,
             rect_max: Vec3,
             time: f32,
+            camera_dir: Vec3,
         }
 
         let push = {
@@ -282,6 +284,7 @@ impl RenderPass for CreatedMeshPass {
                 rect_min: state.rect_min,
                 rect_max: state.rect_max,
                 time: state.time,
+                camera_dir: (Mat3::from_quat(camera.rotation.normalize()) * (Vec3::Z)).normalize(),
             }
         };
 

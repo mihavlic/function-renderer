@@ -57,8 +57,8 @@ pub fn math_into_glsl(expr: &str) -> parser::Result<(String, String)> {
 
     let density = tape.add(SsaExpression::Unary { op: UnaryOperation::Neg, child: density });
 
-    // we want to apply the box sdf only where it positive - ie. outside the box (there is some
-    // negative bias) otherwise the interpolated position may get \"under\" the implicit surface
+    // we want to apply the box sdf only where it's positive - ie. outside the box (there is some
+    // conservative bias) otherwise the interpolated position may get \"under\" the implicit surface
     // where the box sdf density may be higher and so it will also get its derivative which leads to
     // visual artifacts  
     let epsilon = tape.add(SsaExpression::Constant(TotalF32(0.001)));

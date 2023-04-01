@@ -7,7 +7,7 @@ layout(binding = 0, scalar) uniform FunctionData {
     vec3 rect_min;
     vec3 rect_max;
     float time;
-    int padding;
+    vec3 camera_dir;
 } data;
 
 layout(location = 0) in vec3 inPosition;

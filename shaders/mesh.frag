@@ -7,7 +7,7 @@ layout(binding = 0, scalar) uniform FunctionData {
     vec3 rect_min;
     vec3 rect_max;
     float time;
-    int padding;
+    vec3 camera_dir;
 } data;
 
 layout(location = 0) in vec3 inWorldPos;
@@ -19,8 +19,8 @@ vec4 gradient_density(vec4 d, vec3 n);
 
 float worldPosLine(vec3 normal) {
     // do not draw lines for almost-parallel surfaces
-    bool x = abs(dot(normal, vec3(1.0, 0.0, 0.0))) > 0.98;
-    bool y = abs(dot(normal, vec3(0.0, 1.0, 0.0))) > 0.98;
+    bool x = abs(dot(normal, vec3(1.0, 0.0, 0.0))) > 0.998;
+    bool y = abs(dot(normal, vec3(0.0, 1.0, 0.0))) > 0.998;
 
     vec2 coord = inWorldPos.xy;
     // Compute anti-aliased world-space grid lines
@@ -42,31 +42,19 @@ float worldPosLine(vec3 normal) {
     return intensity;
 }
 
+// (possible to use color mixing code from https://github.com/fstl-app/fstl/blob/master/gl/mesh.frag)
 void main() {
-    vec3 view_normal = normalize(cross(dFdx(inViewPos), dFdy(inViewPos)));
-    vec3 triangle_world_normal = normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos)));
-    float a = dot(view_normal, vec3(0.0, 0.0, 1.0));
-
-#if 1
     vec3 normalized_pos = inWorldPos / 63.0;
     vec3 world_pos = mix(data.rect_min, data.rect_max, normalized_pos);
-    vec4 density_input = vec4(world_pos, data.time);
+    vec3 world_normal = normalize(gradient_density(vec4(world_pos, data.time), normalized_pos).xyz);
 
-    vec3 world_normal = abs(normalize(gradient_density(density_input, normalized_pos).xyz));
-    // for some reson the normals are wrongly swizzled?
-    vec3 color = mix(vec3(1.0), world_normal, 0.6);
-    color = mix(vec3(0.0), color, min(a + 0.5, 1.0));
-#else
-    // color mixing code stolen from https://github.com/fstl-app/fstl/blob/master/gl/mesh.frag
-    vec3 base3 = vec3(0.99, 0.96, 0.89);
-    vec3 base2 = vec3(0.92, 0.91, 0.83);
-    vec3 base00 = vec3(0.40, 0.48, 0.51);
+    vec3 color = mix(vec3(1.0), abs(world_normal), 0.6);
 
-    float b = dot(view_normal, vec3(-0.57, -0.57, 0.57));
+    float cosine = max(dot(data.camera_dir, world_normal), 0.0);
+    float darken = mix(0.3, 1.0, cosine);
 
-    vec3 color = (a*base2 + (1-a)*base00)*0.5 + (b*base3 + (1-b)*base00)*0.5;
-#endif
-
+    vec3 triangle_world_normal = normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos)));
     float line = worldPosLine(triangle_world_normal);
-    outColor = vec4(color * line, 1.0);
+
+    outColor = vec4(color * darken * line, 1.0);
 }

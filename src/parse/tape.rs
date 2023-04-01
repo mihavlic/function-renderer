@@ -339,7 +339,7 @@ impl Tape {
                             UnaryOperation::Log2 => write!(f, "vec3 {dout} = {da} / ({a} * {LN_2})"),
                             UnaryOperation::Ln => write!(f, "vec3 {dout} = {da} / {a}"),
                             UnaryOperation::Sqrt => write!(f, "vec3 {dout} = {da} / (2.0 * {o})"),
-                            UnaryOperation::Sin => write!(f, "vec3 {dout} =  {da} * cos({a})"),
+                            UnaryOperation::Sin => write!(f, "vec3 {dout} = {da} * cos({a})"),
                             UnaryOperation::Cos => write!(f, "vec3 {dout} = -{da} * sin({a})"),
                             UnaryOperation::Tan => write!(f, "float cos_{a} = cos({a});\nvec3 {dout} = {da} / (cos_{a} * cos_{a})"),
                             UnaryOperation::CoTan => write!(f, "float sin_{a} = sin({a});\nvec3 {dout} = -{da} / (sin_{a} * sin_{a})"),

@@ -673,6 +673,7 @@ unsafe fn make_graph(
         let state_copy = state.clone();
         let get_or_create_descriptor =
             move |e: &GraphExecutor, device: &Device| -> GlobalDescriptorData {
+                #[repr(C)]
                 struct FunctionData {
                     rect_min: Vec3,
                     rect_max: Vec3,
