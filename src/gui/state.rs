@@ -153,37 +153,42 @@ impl GuiControl {
                     min: all.min,
                     max: all.min + rect_square_size,
                 };
-                let middle = all.shrink2((32.0, 3.0).into());
+                let middle = all.shrink2((32.0, 5.0).into());
 
                 ui.allocate_ui_at_rect(middle, |ui| {
-                    ui.horizontal_centered(|ui| {
-                        ui.add_space((middle.width() - 320.0) / 2.0);
-                        if egui::TextEdit::singleline(&mut self.edit)
-                            .font(egui::TextStyle::Monospace)
-                            .show(ui)
-                            .response
-                            .lost_focus()
-                        {
-                            match parse_math(&self.edit) {
-                                Ok(_) => {
-                                    self.history_index = self.history.len();
-                                    self.history.push(self.edit.clone());
+                    ui.with_layout(
+                        egui::Layout::left_to_right(egui::Align::Center).with_cross_justify(true),
+                        |ui| {
+                            ui.add_space((middle.width() - 320.0) / 2.0);
+                            if egui::TextEdit::singleline(&mut self.edit)
+                                .font(egui::TextStyle::Monospace)
+                                .vertical_align(egui::Align::Center)
+                                .show(ui)
+                                .response
+                                .lost_focus()
+                            {
+                                match parse_math(&self.edit) {
+                                    Ok(_) => {
+                                        self.history_index = self.history.len();
+                                        self.history.push(self.edit.clone());
 
-                                    self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
-                                    self.error = None;
-                                }
-                                Err(e) => {
-                                    self.error = Some(e.to_string());
+                                        self.sender
+                                            .send(AsyncEvent::NewFunction(self.edit.clone()));
+                                        self.error = None;
+                                    }
+                                    Err(e) => {
+                                        self.error = Some(e.to_string());
+                                    }
                                 }
                             }
-                        }
-                        if icon_button(ui, icons::LEFT).clicked() {
-                            new_index = self.history_index.checked_sub(1);
-                        }
-                        if icon_button(ui, icons::RIGHT).clicked() {
-                            new_index = self.history_index.checked_add(1);
-                        }
-                    });
+                            if icon_button(ui, icons::LEFT).clicked() {
+                                new_index = self.history_index.checked_sub(1);
+                            }
+                            if icon_button(ui, icons::RIGHT).clicked() {
+                                new_index = self.history_index.checked_add(1);
+                            }
+                        },
+                    );
                 });
 
                 ui.allocate_ui_at_rect(left_rect, |ui| {
