@@ -42,6 +42,18 @@ float complete_grid(vec3 world_pos, vec3 world_normal) {
 
 // (possible to use color mixing code from https://github.com/fstl-app/fstl/blob/master/gl/mesh.frag)
 void main() {
+    float box_sdf = max(
+        max(
+            max(0.8 - inWorldPos.x, inWorldPos.x - 60.5),
+            max(0.8 - inWorldPos.y, inWorldPos.y - 60.5)
+        ),
+        max(0.8 - inWorldPos.z, inWorldPos.z - 60.5)
+    );
+
+    if (box_sdf > 0.2) {
+        discard;
+    }
+
     vec3 normalized_pos = inWorldPos / 63.0;
     vec3 world_pos = mix(data.rect_min, data.rect_max, normalized_pos);
     vec3 world_normal = normalize(gradient_density(vec4(world_pos, data.time), normalized_pos).xyz);

@@ -16,7 +16,7 @@ use std::{
 
 use super::{parse_math, parser, ParserError, TotalF32, UnaryOperation};
 
-pub const MIN_MARGIN: f32 = 0.5;
+pub const MIN_MARGIN: f32 = 0.8;
 pub const MAX_MARGIN: f32 = 2.5;
 
 #[rustfmt::skip]
@@ -32,7 +32,6 @@ pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, St
     let yn = tape.add(SsaExpression::Builtin(BuiltingVariable::Y_normalized));
     let zn = tape.add(SsaExpression::Builtin(BuiltingVariable::Z_normalized));
     
-    // select between the function having a shell at the edges of the evaluated range or not
     let min_margin = MIN_MARGIN / 63.0;
     let max_margin = 1.0 - MAX_MARGIN / 63.0;
 
