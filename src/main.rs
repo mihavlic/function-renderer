@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 mod gui;
 mod hotreaload;
 mod parse;
@@ -11,45 +9,37 @@ mod yawpitch;
 use dolly::prelude::{Arm, Position, RightHanded, Smooth};
 use dolly::rig::CameraRig;
 use dolly::transform::Transform;
-use egui::{Align, Color32, Layout};
-use egui_winit::winit::event_loop::EventLoopWindowTarget;
 use glam::Vec3;
 use graph::device::reflection::{ReflectedLayout, SpirvModule};
 use graph::device::{self, Device, DeviceCreateInfo, QueueFamilySelection};
 use graph::graph::compile::{GraphCompiler, ImageKindCreateInfo};
 use graph::graph::descriptors::{DescBuffer, DescImage, DescSetBuilder, DescriptorData};
 use graph::graph::execute::{CompiledGraph, GraphExecutor, GraphRunConfig, GraphRunStatus};
-use graph::graph::task::{UnsafeSend, UnsafeSendSync};
+use graph::graph::task::UnsafeSendSync;
 use graph::graph::GraphImage;
 use graph::instance::{Instance, InstanceCreateInfo};
 use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
-use gui::{egui_icon_font_family, GuiControl, GuiOuput, WindowState, FONT_BYTES};
-use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
-use parse::math_into_glsl;
+use gui::{GuiControl, GuiOuput, WindowState,};
+use hotreaload::{ PollResult, ShaderModules, ShaderModulesConfig};
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
 use stl::write_stl;
 use std::cell::RefCell;
 use std::error::Error;
-use std::fs::{File, OpenOptions};
-use std::future::Future;
+use std::fs::{OpenOptions};
 use std::io::BufWriter;
-use std::ops::Deref;
-use std::pin::Pin;
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use winit::event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
-use winit::platform::wayland::WindowBuilderExtWayland;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
 
 use crate::gui::{PaintConfig, RendererConfig};
-use crate::parse::{TotalF32, MAX_MARGIN, MIN_MARGIN};
 use crate::passes::{LambdaPass, MeshPass};
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
@@ -144,7 +134,6 @@ fn main() {
         let mut modules_option = Some(modules);
         let mut cache_option = Some(cache);
 
-        let mut first = true;
         let mut inner_size = None;
 
         event_loop.run(move |event, _, control_flow| {
@@ -171,8 +160,10 @@ fn main() {
                 device.threadpool().spawn(move || {
                     if let Some(path) = rfd::FileDialog::new().add_filter("stl", &["stl"]).save_file() {
                         if let Ok(file) = OpenOptions::new().read(false).write(true).truncate(true).create(true).open(&path) {
-                            let mut writer = BufWriter::new(file);
-                            write_stl(writer, &vertices, &indices);
+                            let writer = BufWriter::new(file);
+                            if let Err(e) = write_stl(writer, &vertices, &indices) {
+                                eprintln!("Error saving mesh to '{path:?}': {e}");
+                            }
                         } else {
                             eprintln!("Failed to open {path:?}");
                         }
@@ -218,7 +209,6 @@ fn main() {
 
                         match modules.poll() {
                             PollResult::Recreate => rebuild_graph = true,
-                            PollResult::Skip => return,
                             PollResult::Ok if graph.is_none() => rebuild_graph = true,
                             PollResult::Ok => {}
                             PollResult::Exit => exit = true,
@@ -269,7 +259,7 @@ fn main() {
                                                     // skip the size and offset fields at the start of the buffer
                                                     let ptr = ptr.add(8);
 
-                                                    tx.send(kind(ptr, len as usize));
+                                                    let _ = tx.send(kind(ptr, len as usize));
                                                 },
                                                 device,
                                             );
@@ -332,7 +322,6 @@ fn main() {
                                 &mut modules,
                                 &mut compiler,
                                 &mut cache,
-                                window_state.ctx().clone(),
                                 &device,
                             );
 
@@ -351,6 +340,7 @@ fn main() {
                         }
                     }
                     Event::LoopDestroyed => {
+                        // the vulkan context cleanup takes like 800 ms, this makes it go fast!
                         std::process::exit(0);
 
                         drop(graph.take());
@@ -382,15 +372,13 @@ unsafe fn make_graph(
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
     cache: &mut RecomputationCache,
-    egui_context: Arc<egui::Context>,
     device: &device::OwnedDevice,
 ) -> Result<GraphOutput, Box<dyn Error>> {
     macro_rules! args {
         ($($arg:expr),*) => {
-            |state| {
-                use std::hash::Hash;
+            |_state| {
                 $(
-                    $arg.hash(state);
+                    std::hash::Hash::hash(&$arg, _state);
                 )*
             }
         };
@@ -398,7 +386,7 @@ unsafe fn make_graph(
 
     let cache = RefCell::new(cache);
 
-    let mut create_pipeline = |path: &str, needs_eval_fn: bool| -> Result<_, Box<dyn Error>> {
+    let mut create_pipeline = |path: &str| -> Result<_, Box<dyn Error>> {
         let mut cache = cache.borrow_mut();
         let module = modules.retrieve(path, device)?;
 
@@ -449,7 +437,7 @@ unsafe fn make_graph(
                             flags: vk::ImageCreateFlags::empty(),
                             size,
                             format,
-                            samples: vk::SampleCountFlags::C1,
+                            samples,
                             mip_levels: 1,
                             array_layers: 1,
                             tiling: vk::ImageTiling::OPTIMAL,
@@ -493,10 +481,10 @@ unsafe fn make_graph(
             .into_inner()
     };
 
-    let populate_grid = create_pipeline("shaders/populate_grid.comp", true)?;
-    let intersect = create_pipeline("shaders/intersect.comp", true)?;
-    let compute_vertex = create_pipeline("shaders/compute_vertex.comp", true)?;
-    let emit_triangles = create_pipeline("shaders/emit_triangles.comp", false)?;
+    let populate_grid = create_pipeline("shaders/populate_grid.comp")?;
+    let intersect = create_pipeline("shaders/intersect.comp")?;
+    let compute_vertex = create_pipeline("shaders/compute_vertex.comp")?;
+    let emit_triangles = create_pipeline("shaders/emit_triangles.comp")?;
 
     let depth_image = create_image(
         vk::Format::D32_SFLOAT,
@@ -759,7 +747,7 @@ unsafe fn make_graph(
         let whole_descriptor_pipeline_layout_copy = whole_descriptor_pipeline_layout.clone();
         let state_copy = state.clone();
         let get_or_create_descriptor =
-            move |e: &GraphExecutor, device: &Device| -> GlobalDescriptorData {
+            move |e: &GraphExecutor| -> GlobalDescriptorData {
                 #[repr(C)]
                 struct FunctionData {
                     rect_min: Vec3,
@@ -819,7 +807,7 @@ unsafe fn make_graph(
         let bind_descriptor = move |e: &GraphExecutor, device: &Device| {
             let mut blackboard = e.execution_blackboard_mut();
             let data = blackboard.get_or_insert_with::<GlobalDescriptorData, _>(|| {
-                get_or_create_descriptor(e, device)
+                get_or_create_descriptor(e)
             });
 
             device.device().cmd_bind_descriptor_sets(
@@ -1170,8 +1158,8 @@ unsafe fn make_graph(
                         swapchain_flags,
                         swapchain_usage,
                         swapchain_format,
-                        swapchain_width,
-                        swapchain_height,
+                        _swapchain_width,
+                        _swapchain_height,
                     ) = get_image_info(swapchain_image);
                     let formats = &[swapchain_format];
                     let mut data = state.lock().unwrap();
@@ -1202,7 +1190,7 @@ unsafe fn make_graph(
                             color_view,
                             color_flags,
                             color_usage,
-                            color_format,
+                            _color_format,
                             color_width,
                             color_height,
                         ) = get_image_info(window_color.unwrap());
@@ -1319,7 +1307,7 @@ unsafe fn make_device(
         p_next: (&mut timeline) as *mut _ as *mut _,
         ..Default::default()
     };
-    let mut imageless = vk::PhysicalDeviceImagelessFramebufferFeaturesKHR {
+    let imageless = vk::PhysicalDeviceImagelessFramebufferFeaturesKHR {
         imageless_framebuffer: vk::TRUE,
         p_next: (&mut dynamic) as *mut _ as *mut _,
         ..Default::default()
@@ -1364,16 +1352,16 @@ unsafe fn make_swapchain(
         }
     };
 
-    let (present_modes, result) = device
-        .instance()
-        .handle()
-        .get_physical_device_surface_present_modes_khr(
-            device.physical_device(),
-            surface.handle(),
-            None,
-        )
-        .unwrap();
-    assert_eq!(result, vk::Result::SUCCESS);
+    // let (present_modes, result) = device
+    //     .instance()
+    //     .handle()
+    //     .get_physical_device_surface_present_modes_khr(
+    //         device.physical_device(),
+    //         surface.handle(),
+    //         None,
+    //     )
+    //     .unwrap();
+    // assert_eq!(result, vk::Result::SUCCESS);
 
     let mut present_mode = vk::PresentModeKHR::FIFO;
     // for mode in present_modes {

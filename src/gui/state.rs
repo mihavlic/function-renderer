@@ -1,14 +1,13 @@
 use crate::{
     gui::egui_icon_font_family,
     hotreaload::AsyncEvent,
-    parse::{math_into_glsl, parse_math, MAX_MARGIN, MIN_MARGIN},
+    parse::{parse_math, MAX_MARGIN, MIN_MARGIN},
     ApplicationState,
 };
-use egui::{Color32, Layout, Ui, Widget};
+use egui::{Color32, Ui, Widget};
 use glam::Vec3;
 use graph::storage::DefaultAhashRandomstate;
 use std::{
-    any::TypeId,
     hash::{BuildHasher, Hash, Hasher},
     sync::{mpsc::Sender, Arc, Mutex},
 };
@@ -33,12 +32,6 @@ struct CenterControl {
 }
 
 impl CenterControl {
-    fn init(&mut self, min: Vec3, max: Vec3) {
-        self.center = (min + max) / 2.0;
-        let halves = (max - min) / 2.0;
-        self.half = halves.max_element();
-    }
-
     fn ui(&mut self, ui: &mut Ui, sender: &Sender<AsyncEvent>) {
         egui::Grid::new("center grid")
             .min_col_width(0.0)
@@ -68,19 +61,13 @@ impl CenterControl {
                 ui.end_row();
             });
         if ui.checkbox(&mut self.density, "thickness").changed() {
-            sender.send(AsyncEvent::GenerateThickness(self.density));
+            _ = sender.send(AsyncEvent::GenerateThickness(self.density));
         }
     }
 
     fn output(&self) -> (Vec3, Vec3) {
         (self.center - self.half, self.center + self.half)
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ControlKind {
-    Center,
-    Interval,
 }
 
 pub struct GuiOuput {
@@ -115,7 +102,7 @@ impl GuiControl {
                 "-1.0"
             };
 
-            sender.send(AsyncEvent::NewFunction(expr.to_owned()));
+            _ = sender.send(AsyncEvent::NewFunction(expr.to_owned()));
         }
 
         Self {
@@ -209,7 +196,8 @@ impl GuiControl {
                                             self.history_index = self.history.len();
                                             self.history.push(self.edit.clone());
 
-                                            self.sender
+                                            _ = self
+                                                .sender
                                                 .send(AsyncEvent::NewFunction(self.edit.clone()));
                                             self.error = None;
                                         }
@@ -298,7 +286,7 @@ impl GuiControl {
 
                 match parse_math(&self.edit) {
                     Ok(_) => {
-                        self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
+                        _ = self.sender.send(AsyncEvent::NewFunction(self.edit.clone()));
                         self.error = None;
                     }
                     Err(e) => {

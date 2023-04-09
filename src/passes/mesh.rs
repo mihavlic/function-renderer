@@ -1,30 +1,21 @@
-use std::{
-    ops::Deref,
-    sync::{Arc, Mutex},
-};
-
-use dolly::{prelude::RightHanded, rig::CameraRig, transform::Transform};
-use glam::{EulerRot, Mat3, Mat4, Quat, Vec3, Vec3Swizzles, Vec4Swizzles};
+use crate::ApplicationState;
+use glam::{Mat3, Mat4, Vec3};
 use graph::{
     graph::{
         compile::GraphContext,
-        descriptors::{DescBuffer, DescSetBuilder, DescriptorData},
+        descriptors::{DescSetBuilder, DescriptorData},
         execute::GraphExecutor,
         record::GraphPassBuilder,
         task::GraphicsPipelinePromise,
         GraphBuffer, GraphImage,
     },
-    object::{self, ConcreteGraphicsPipeline, Extent, GraphicsPipeline, RenderPassMode},
+    object::{ConcreteGraphicsPipeline, Extent, GraphicsPipeline, RenderPassMode},
     passes::{CreatePass, RenderPass},
     smallvec::SmallVec,
     util::ffi_ptr::AsFFiPtr,
 };
 use pumice::{util::ObjectHandle, vk};
-
-use crate::{
-    parse::{MAX_MARGIN, MIN_MARGIN},
-    ApplicationState,
-};
+use std::sync::{Arc, Mutex};
 
 pub struct MeshPass {
     pub pipeline: GraphicsPipeline,
@@ -320,10 +311,4 @@ impl RenderPass for CreatedMeshPass {
 
         Ok(())
     }
-}
-
-pub struct ArcBallAngles {
-    pub horizontal: f32,
-    pub vertical: f32,
-    pub distance: f32,
 }

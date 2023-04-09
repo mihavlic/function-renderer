@@ -170,7 +170,7 @@ impl RecomputationCache {
     >(
         &mut self,
         mut computation_identity: L,
-        mut computation_arguments: S,
+        computation_arguments: S,
         fun: F,
     ) -> ComputationResult<T> {
         let location = std::panic::Location::caller();
@@ -220,10 +220,4 @@ impl RecomputationCache {
 
         self.get_or_insert_impl(location_fingerprint, fun)
     }
-}
-
-fn make_hash<T: Hash>(h: &T) -> u64 {
-    let mut hasher = (graph::storage::DefaultAhashRandomstate).build_hasher();
-    h.hash(&mut hasher);
-    hasher.finish()
 }

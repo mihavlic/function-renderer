@@ -9,13 +9,12 @@ use std::{
     sync::Arc,
 };
 
-use decorations::*;
 use egui::{ClippedPrimitive, TexturesDelta};
 use winit::{
     event::{DeviceId, ElementState, ModifiersState, MouseButton},
-    window::{ResizeDirection, Window, WindowId},
+    window::{ResizeDirection, Window},
 };
-pub use {icons::*, renderer::*, state::*, util::*};
+pub use {icons::*, renderer::*, state::*};
 
 pub type WinitEvent<'a> = winit::event::Event<'a, ()>;
 
@@ -105,17 +104,17 @@ impl WindowState {
         self.window.is_minimized()
     }
     pub fn set_maximized(&self, maximized: bool) {
-        self.window.set_maximized(maximized);
+        _ = self.window.set_maximized(maximized);
     }
     pub fn set_minimized(&self, minimized: bool) {
-        self.window.set_minimized(minimized);
+        _ = self.window.set_minimized(minimized);
     }
     pub fn start_window_drag(&self) {
-        self.window.drag_window();
+        _ = self.window.drag_window();
         self.inject_pointer_release();
     }
     pub fn start_window_drag_resize(&self, direction: ResizeDirection) {
-        self.window.drag_resize_window(direction);
+        _ = self.window.drag_resize_window(direction);
         self.inject_pointer_release();
     }
     fn inject_pointer_release(&self) {
@@ -135,7 +134,7 @@ impl WindowState {
     pub fn process_event(&self, event: WinitEvent<'_>) {
         let mut inner = self.inner_mut();
         match &event {
-            WinitEvent::WindowEvent { window_id, event } => {
+            WinitEvent::WindowEvent { event, .. } => {
                 let mut allow_consumed = true;
                 match event {
                     winit::event::WindowEvent::MouseWheel { .. } => {
@@ -168,9 +167,6 @@ impl WindowState {
         let mut inner = self.inner_mut();
 
         let new_input = inner.egui_winit.take_egui_input(&self.window);
-        let pixels_per_point = new_input
-            .pixels_per_point
-            .unwrap_or(inner.egui_winit.pixels_per_point());
 
         drop(inner);
         self.egui.begin_frame(new_input);

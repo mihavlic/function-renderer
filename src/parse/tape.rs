@@ -1,8 +1,4 @@
-use std::{
-    f32::consts::FRAC_PI_2,
-    fmt::{write, Display, Pointer},
-    hash::Hash,
-};
+use std::{f32::consts::FRAC_PI_2, fmt::Display, hash::Hash};
 
 use graph::{device::LazyDisplay, storage::DefaultAhashMap};
 
@@ -100,24 +96,22 @@ impl Tape {
     fn process_ast_impl(&mut self, exppression: &super::Expression) -> SsaIndex {
         let ssa = match exppression {
             super::Expression::Ternary { op, a, b, c } => {
-                let mut op = *op;
+                let op = *op;
 
-                let mut a = self.process_ast_impl(a);
-                let mut b = self.process_ast_impl(b);
-                let mut c = self.process_ast_impl(c);
+                let a = self.process_ast_impl(a);
+                let b = self.process_ast_impl(b);
+                let c = self.process_ast_impl(c);
 
                 let a_value = self.get_constant_value(a);
                 let b_value = self.get_constant_value(b);
                 let c_value = self.get_constant_value(c);
 
-                'make_expr: {
-                    if let (Some(a), Some(b), Some(c)) = (a_value, b_value, c_value) {
-                        let v = TernaryOperation::eval(op, a, b, c);
-                        SsaExpression::Constant(TotalF32(v))
-                    } else {
-                        match op {
-                            TernaryOperation::Select => SsaExpression::Ternary { op, a, b, c },
-                        }
+                if let (Some(a), Some(b), Some(c)) = (a_value, b_value, c_value) {
+                    let v = TernaryOperation::eval(op, a, b, c);
+                    SsaExpression::Constant(TotalF32(v))
+                } else {
+                    match op {
+                        TernaryOperation::Select => SsaExpression::Ternary { op, a, b, c },
                     }
                 }
             }
@@ -148,8 +142,8 @@ impl Tape {
                                     if v.fract().abs() < f32::EPSILON {
                                         let count = v.round() as u32;
                                         if 1 < count && count <= 4 || count % 2 == 1 {
-                                            let mut prev = left;
-                                            for i in 0..(count - 1) {
+                                            let prev = left;
+                                            for _ in 0..(count - 1) {
                                                 self.mark_used(left);
                                                 left = self.add_internal(SsaExpression::Binary {
                                                     op: BinaryOperation::Mul,
@@ -213,7 +207,6 @@ impl Tape {
                 };
                 SsaExpression::Constant(TotalF32(value))
             }
-            super::Expression::Variable(_) => todo!(),
             super::Expression::Number(v) => SsaExpression::Constant(TotalF32(*v)),
         };
         self.add_internal(ssa)
@@ -239,9 +232,6 @@ impl Tape {
                 tape.push((expression, true));
                 index
             })
-    }
-    pub fn get_last_expression(&self) -> Option<SsaIndex> {
-        self.tape.len().checked_sub(1).map(SsaIndex::from_usize)
     }
     pub fn write_glsl(&self, differentiate: bool) -> String {
         let mut out = String::new();
@@ -302,7 +292,6 @@ impl Tape {
                 let dout = SsaIndexDerivative(o);
                 match *s {
                     SsaExpression::Ternary { op, a, b, c } => {
-                        let da = SsaIndexDerivative(a);
                         let db = SsaIndexDerivative(b);
                         let dc = SsaIndexDerivative(c);
                         match op {
@@ -328,7 +317,7 @@ impl Tape {
                                     let b_1 = b - 1.0;
                                     write!(f, "vec3 {dout} = {da} * {b} * pow({a}, {b_1})")
                                 } else if let Some(a) = self.get_constant_value(a)  {
-                                    write!(f, "vec3 {dout} = {db} * {o} * log({b})")
+                                    write!(f, "vec3 {dout} = {db} * {o} * log({a})")
                                 } else {
                                     write!(f, "vec3 {dout} = 0.0 /* TODO */")
                                 }
@@ -363,7 +352,7 @@ impl Tape {
                             UnaryOperation::ArcCotan => write!(f, "vec3 {dout} = -{da} / (1.0 + {a}*{a})"),
                         }
                     }
-                    SsaExpression::Constant(v) => write!(f, "vec3 {dout} = vec3(0.0)"),
+                    SsaExpression::Constant(_) => write!(f, "vec3 {dout} = vec3(0.0)"),
                     SsaExpression::Builtin(b) => match b {
                         BuiltingVariable::X | BuiltingVariable::X_normalized => {
                             write!(f, "vec3 {dout} = vec3(1.0, 0.0, 0.0)")

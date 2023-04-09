@@ -3,7 +3,7 @@ use winit::window::ResizeDirection;
 
 use crate::gui::{icon_button, icons};
 
-use super::{GuiOuput, WindowState};
+use super::WindowState;
 
 pub fn custom_window_frame(
     window: &WindowState,

@@ -1,11 +1,3 @@
-struct Triangle {
-    normal: glam::Vec3,
-    v1: glam::Vec3,
-    v2: glam::Vec3,
-    v3: glam::Vec3,
-    zero: u16,
-}
-
 /// Writes an indexed triangle list mesh to an stl,
 /// header and attribute fields are zero
 /// see https://en.wikipedia.org/wiki/STL_(file_format)#Binary_STL
@@ -22,7 +14,7 @@ pub fn write_stl(
     writer.write_all(&[0u8; 80])?;
 
     let triangles = (indices.len() / 3).try_into().unwrap();
-    write_element::<u32>(&mut writer, triangles);
+    write_element::<u32>(&mut writer, triangles)?;
 
     let mut i = 0;
     while i < indices.len() {

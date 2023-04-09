@@ -33,9 +33,9 @@ impl TernaryOperation {
         match self {
             TernaryOperation::Select => {
                 if a > 0.0 {
-                    a
-                } else {
                     b
+                } else {
+                    c
                 }
             }
         }
@@ -264,7 +264,6 @@ pub enum Expression {
     },
     Builtin(BuiltingVariable),
     Constant(Constant),
-    Variable(String),
     Number(f32),
 }
 
@@ -276,7 +275,6 @@ enum Token<'a> {
     Div,
     Abs,
     Exp,
-    Num,
     Greater,
     Lower,
     GreaterEq,
@@ -412,18 +410,6 @@ fn is_identifier(c: char) -> bool {
     c == '_' || c.is_alphabetic()
 }
 
-fn operator_precedence(token: Token) -> Option<u8> {
-    Some(match token {
-        Token::Sub => 4,
-        Token::Add => 4,
-        Token::Div => 3,
-        Token::Mul => 2,
-        Token::Exp => 1,
-        Token::Greater | Token::Lower | Token::GreaterEq | Token::LowerEq | Token::Eq => 5,
-        _ => return None,
-    })
-}
-
 struct Parser<'a> {
     tokens: VecDeque<Token<'a>>,
 }
@@ -540,7 +526,7 @@ fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
     }
 
     match parser.peek() {
-        Token::Num | Token::LParen | Token::Ident(_) if implicit_mul_eligible => {
+        Token::Number(_) | Token::LParen | Token::Ident(_) if implicit_mul_eligible => {
             let right = parse_expr(parser, 1)?;
             Ok(Box::new(Expression::Binary {
                 op: BinaryOperation::Mul,
@@ -615,10 +601,9 @@ pub fn debug_ast(node: &Expression) {
         }
         Expression::Constant(constant) => {
             eprint!("{:?}", constant);
-        }
-        Expression::Variable(var) => {
-            eprint!("${var}");
-        }
+        } // Expression::Variable(var) => {
+          //     eprint!("${var}");
+          // }
     }
 }
 

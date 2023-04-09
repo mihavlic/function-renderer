@@ -1,6 +1,7 @@
+#![allow(unused)]
+
 /// character definitions for our bundled icon font
 /// generated with https://fontello.com/
-use std::sync::Arc;
 
 pub fn egui_icon_font_family() -> egui::FontFamily {
     egui::FontFamily::Name("icons".into())

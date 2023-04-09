@@ -1,40 +1,22 @@
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::env::current_dir;
 use std::error::Error;
-use std::fmt::{format, Display};
 use std::fs::File;
 use std::hash::Hash;
-use std::io::{Cursor, Seek, Write};
-use std::os::unix::prelude::OsStrExt;
+use std::io;
+use std::io::Seek;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
-use std::{io, slice};
 
 use crate::parse::{self, math_into_glsl, parse_math, GlslCompiler};
-use graph::device::debug::LazyDisplay;
-use graph::device::reflection::ReflectedLayout;
-use graph::device::{self, read_spirv, DeviceCreateInfo, QueueFamilySelection};
-use graph::graph::compile::GraphCompiler;
-use graph::instance::{Instance, InstanceCreateInfo, OwnedInstance};
-use graph::object::{self, ImageCreateInfo, PipelineStage, SwapchainCreateInfo};
-use graph::passes::{self, ClearImage, SimpleShader};
-use graph::smallvec::{smallvec, SmallVec};
-use graph::tracing::tracing_subscriber::install_tracing_subscriber;
-use graph::vma::{AllocationCreateFlags, AllocationCreateInfo};
-use notify::event::{DataChange, ModifyKind};
+use graph::device;
+use graph::object;
 use notify::Watcher;
-use pumice::VulkanResult;
-use pumice::{util::ApiLoadConfig, vk};
 use rustyline::Editor;
-use winit::event::{Event, WindowEvent};
-use winit::event_loop::EventLoop;
-use winit::platform::run_return::EventLoopExtRunReturn;
-use winit::window::WindowBuilder;
 
 pub struct ModuleEntry {
     pub module: object::ShaderModule,
@@ -62,13 +44,8 @@ struct SimpleFileEntry {
 #[derive(PartialEq, Eq, Debug)]
 pub enum PollResult {
     Recreate,
-    Skip,
     Ok,
     Exit,
-}
-
-struct StdinWatcherData {
-    thread: JoinHandle<()>,
 }
 
 struct DensityFunctionData {
@@ -102,12 +79,12 @@ impl ShaderModules {
     pub fn new(config: ShaderModulesConfig, thickness: bool) -> Self {
         let (sender, receiver) = mpsc::channel();
 
-        let mut sender_copy = sender.clone();
+        let sender_copy = sender.clone();
         let watcher = notify::recommended_watcher(
             move |res: Result<notify::Event, notify::Error>| match res {
                 Ok(ok) => match ok.kind {
                     notify::EventKind::Modify(_) => {
-                        sender_copy.send(AsyncEvent::FilesChanged(ok.paths));
+                        let _ = sender_copy.send(AsyncEvent::FilesChanged(ok.paths));
                     }
                     _ => {}
                 },
@@ -116,7 +93,7 @@ impl ShaderModules {
         )
         .unwrap();
 
-        let mut sender_copy = sender.clone();
+        let sender_copy = sender.clone();
         let stdin_watcher = move || {
             use std::io::Write;
 
@@ -125,7 +102,7 @@ impl ShaderModules {
                 .join("history.txt");
 
             let mut rl = Editor::<()>::new().unwrap();
-            rl.load_history(&path);
+            let _ = rl.load_history(&path);
 
             if let Some(line) = rl.history().last() {
                 println!("Displaying last function\n  {line}");
@@ -160,7 +137,7 @@ impl ShaderModules {
                         }
                     }
                     Err(_) => {
-                        sender_copy.send(AsyncEvent::Exit);
+                        let _ = sender_copy.send(AsyncEvent::Exit);
                         break;
                     }
                 }
@@ -234,7 +211,6 @@ impl ShaderModules {
         self.invalidate_file_impl(&path);
     }
     pub fn poll(&mut self) -> PollResult {
-        let mut prev_thickness = self.thickness;
         let mut new_density_function = None;
         let mut files = Vec::new();
         let mut status = PollResult::Ok;
@@ -260,8 +236,6 @@ impl ShaderModules {
                 }
             }
         }
-
-        if self.thickness != prev_thickness {}
 
         if let Some(new) = new_density_function {
             self.density_fn_changed(new)
@@ -300,7 +274,8 @@ impl ShaderModules {
 
                 assert!(path.exists());
                 self.watcher
-                    .watch(&path, notify::RecursiveMode::NonRecursive);
+                    .watch(&path, notify::RecursiveMode::NonRecursive)
+                    .unwrap();
 
                 0
             }
@@ -326,7 +301,7 @@ impl ShaderModules {
                 source.contains(DENSITY_FUNCTION_MAGIC) || source.contains(GRADIENT_FUNCTION_MAGIC);
 
             if needs_density_fn {
-                let Some(DensityFunctionData { original, function, gradient }) = self.density_function.as_ref() else {
+                let Some(DensityFunctionData { function, gradient, .. }) = self.density_function.as_ref() else {
                     panic!()
                 };
 
@@ -375,7 +350,8 @@ impl ShaderModules {
 
                 assert!(&path.exists());
                 self.watcher
-                    .watch(&path, notify::RecursiveMode::NonRecursive);
+                    .watch(&path, notify::RecursiveMode::NonRecursive)
+                    .unwrap();
 
                 Ok(new)
             }
@@ -394,10 +370,12 @@ fn send_fun(expr: &str, sender: &Sender<AsyncEvent>) -> bool {
             }
         }
         Err(e) => {
+            use std::io::Write;
+
             let error = graph::util::debug_callback::Colored(graph::tracing::Severity::Error, &e);
             let mut stdout = std::io::stdout().lock();
-            write!(stdout, "\r{error}\n❯ ");
-            stdout.flush();
+            let _ = write!(stdout, "\r{error}\n❯ ");
+            let _ = stdout.flush();
             false
         }
     }

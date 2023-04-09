@@ -1,26 +1,18 @@
 use super::util::EguiDescriptorSetAllocator;
 use egui::{Color32, TextureId, TexturesDelta};
 use graph::{
-    device::{
-        batch::GenerationId, maybe_attach_debug_label, staging::ImageRegion,
-        submission::QueueSubmission, Device,
-    },
-    graph::{
-        execute::GraphExecutor,
-        resource_marker::{TypeOption, TypeSome},
-    },
+    device::{batch::GenerationId, staging::ImageRegion, submission::QueueSubmission, Device},
     object::{self},
     smallvec::{smallvec, SmallVec},
-    storage::{DefaultAhashRandomstate, DefaultAhashSet},
+    storage::DefaultAhashRandomstate,
     util::ffi_ptr::AsFFiPtr,
 };
 use pumice::{util::ObjectHandle, vk};
 use pumice_vma as vma;
-use slice_group_by::{GroupBy, GroupByMut};
+use slice_group_by::GroupByMut;
 use std::{
     collections::{hash_map::Entry, HashMap},
     ffi::c_void,
-    hash::{BuildHasher, Hash, Hasher},
 };
 
 const VERTEX_BUFFER_COUNT: usize = 1024 * 1024 * 4;
@@ -63,7 +55,6 @@ pub struct Renderer {
 
     samplers: HashMap<egui::TextureOptions, object::Sampler, DefaultAhashRandomstate>,
     texture_images: HashMap<egui::TextureId, TextureImage, DefaultAhashRandomstate>,
-    next_native_tex_id: u64,
 }
 
 pub struct RendererConfig {
@@ -394,14 +385,7 @@ impl Renderer {
             pending_retired_textures: Vec::new(),
             samplers: Default::default(),
             texture_images: Default::default(),
-            next_native_tex_id: 0,
         }
-    }
-
-    fn register_user_texture(&mut self) -> TextureId {
-        let id = self.next_native_tex_id;
-        self.next_native_tex_id += 1;
-        TextureId::User(id)
     }
 
     unsafe fn create_buffer<T>(
@@ -964,9 +948,6 @@ impl Renderer {
                 panic!("Ran out of memory for mesh buffers");
             }
 
-            let size = mesh.indices.len();
-            let ptr = mesh.indices.as_ptr() as usize;
-
             vertex_buffer_ptr.copy_from_nonoverlapping(mesh.vertices.as_ptr(), mesh.vertices.len());
             index_buffer_ptr.copy_from_nonoverlapping(mesh.indices.as_ptr(), mesh.indices.len());
 
@@ -1040,19 +1021,12 @@ impl Renderer {
         device: &Device,
     ) {
         let Self {
-            resolve_attachment,
-            render_pass,
-            framebuffer,
             set_allocator,
             desc_layout,
-            pipeline,
-            vertex_buffer,
-            index_buffer,
             pending_retired_sets,
-            pending_retired_textures,
             samplers,
             texture_images,
-            next_native_tex_id,
+            ..
         } = self;
 
         let components_copy = components.clone();

@@ -1,21 +1,8 @@
-use std::{
-    ffi::c_void,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
-
 use graph::{
     device::Device,
-    graph::{
-        descriptors::{DescImage, DescSetBuilder},
-        execute::GraphExecutor,
-        record::GraphPassBuilder,
-        GraphImage,
-    },
-    object::{self},
+    graph::{execute::GraphExecutor, record::GraphPassBuilder},
     passes::{CreatePass, RenderPass},
 };
-use pumice::{util::ObjectHandle, vk};
 
 pub struct LambdaPass<
     C: FnMut(&mut GraphPassBuilder) + Send + 'static,
@@ -33,8 +20,8 @@ impl<
     }
     fn create(
         self,
-        prepared: Self::PreparedData,
-        ctx: &mut graph::graph::compile::GraphContext,
+        _prepared: Self::PreparedData,
+        _ctx: &mut graph::graph::compile::GraphContext,
     ) -> Box<dyn RenderPass + Send> {
         Box::new(self.1)
     }

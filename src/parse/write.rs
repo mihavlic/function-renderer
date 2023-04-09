@@ -1,20 +1,13 @@
-use crate::parse::{
-    self, debug_ast, BinaryOperation, BuiltingVariable, Expression, SsaExpression, Tape,
-};
-use graph::device::read_spirv;
+use crate::parse::{self, BinaryOperation, BuiltingVariable, SsaExpression, Tape};
 use pumice::vk;
-use shaderc::{IncludeCallbackResult, ShaderKind};
+use shaderc::ShaderKind;
 use std::{
     error::Error,
-    f32::consts::FRAC_PI_2,
-    fmt::Write,
-    fs::File,
     path::{Path, PathBuf},
-    process::{ExitStatus, Stdio},
     str::FromStr,
 };
 
-use super::{parse_math, parser, ParserError, TotalF32, UnaryOperation};
+use super::{parse_math, parser, TotalF32, UnaryOperation};
 
 pub const MIN_MARGIN: f32 = 0.8;
 pub const MAX_MARGIN: f32 = 2.5;
