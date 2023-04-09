@@ -23,7 +23,7 @@ use pumice::{util::ObjectHandle, vk};
 
 use crate::{
     parse::{MAX_MARGIN, MIN_MARGIN},
-    FrameData,
+    ApplicationState,
 };
 
 pub struct MeshPass {
@@ -34,7 +34,7 @@ pub struct MeshPass {
     pub vertices: GraphBuffer,
     pub indices: GraphBuffer,
     pub draw_parameter_buffer: GraphBuffer,
-    pub transform: Arc<Mutex<FrameData>>,
+    pub transform: Arc<Mutex<ApplicationState>>,
 }
 
 impl CreatePass for MeshPass {

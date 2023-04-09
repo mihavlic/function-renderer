@@ -2,7 +2,7 @@ use crate::{
     gui::egui_icon_font_family,
     hotreaload::AsyncEvent,
     parse::{math_into_glsl, parse_math, MAX_MARGIN, MIN_MARGIN},
-    FrameData,
+    ApplicationState,
 };
 use egui::{Color32, Layout, Ui, Widget};
 use glam::Vec3;
@@ -96,16 +96,16 @@ pub struct GuiControl {
     error: Option<String>,
     history: Vec<String>,
     history_index: usize,
-    frame: Arc<Mutex<FrameData>>,
     control: CenterControl,
-
     open_settings: bool,
+
+    state: Arc<Mutex<ApplicationState>>,
 }
 
 impl GuiControl {
     pub fn new(
         sender: Sender<AsyncEvent>,
-        frame: Arc<Mutex<FrameData>>,
+        state: Arc<Mutex<ApplicationState>>,
         initial_history: &[&str],
     ) -> Self {
         if let Some(last) = initial_history.last() {
@@ -129,7 +129,7 @@ impl GuiControl {
                 .map(ToOwned::to_owned)
                 .collect(),
             history_index: initial_history.len().saturating_sub(1),
-            frame,
+            state,
             control: CenterControl {
                 center: Vec3::splat(0.0),
                 half: 16.0,
@@ -300,7 +300,7 @@ impl GuiControl {
 
         {
             let (min, max) = self.control.output();
-            let mut frame = self.frame.lock().unwrap();
+            let mut frame = self.state.lock().unwrap();
             // don't ask me how this works
             let scale = (60.0 + MIN_MARGIN + MAX_MARGIN) / 60.0;
             let scale2 = MIN_MARGIN / (60.0 + MIN_MARGIN + MAX_MARGIN);

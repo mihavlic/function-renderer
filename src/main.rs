@@ -48,7 +48,7 @@ use crate::passes::{LambdaPass, MeshPass};
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
 
-pub struct FrameData {
+pub struct ApplicationState {
     camera: Transform<RightHanded>,
     primitives: Vec<egui::ClippedPrimitive>,
     textures_delta: egui::TexturesDelta,
@@ -58,7 +58,7 @@ pub struct FrameData {
     time: f32,
 }
 
-impl Default for FrameData {
+impl Default for ApplicationState {
     fn default() -> Self {
         Self {
             camera: Transform::IDENTITY,
@@ -105,7 +105,8 @@ fn main() {
             .with(Arm::new(Vec3::Z * 120.0))
             .build();
 
-        let frame_data: Arc<Mutex<FrameData>> = Arc::new(Mutex::new(FrameData::default()));
+        let frame_data: Arc<Mutex<ApplicationState>> =
+            Arc::new(Mutex::new(ApplicationState::default()));
         let mut prev = std::time::Instant::now();
         let mut graph: Option<CompiledGraph> = None;
 
@@ -292,7 +293,7 @@ unsafe fn make_graph(
     swapchain: &object::Swapchain,
     function_extent: [u32; 2],
     queue: device::submission::Queue,
-    state: Arc<Mutex<FrameData>>,
+    state: Arc<Mutex<ApplicationState>>,
     modules: &mut ShaderModules,
     compiler: &mut GraphCompiler,
     cache: &mut RecomputationCache,

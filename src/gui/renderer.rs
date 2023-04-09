@@ -2,7 +2,7 @@ use super::util::EguiDescriptorSetAllocator;
 use egui::{Color32, TextureId, TexturesDelta};
 use graph::{
     device::{
-        batch::GenerationId, maybe_attach_debug_label, staging::ImageWrite,
+        batch::GenerationId, maybe_attach_debug_label, staging::ImageRegion,
         submission::QueueSubmission, Device,
     },
     graph::{
@@ -676,7 +676,7 @@ impl Renderer {
                 // TODO create a better api that doesn't require a vector
                 let regions = blits
                     .iter()
-                    .map(|b| ImageWrite {
+                    .map(|b| ImageRegion {
                         buffer_row_length: 0,
                         buffer_image_height: 0,
                         image_subresource: vk::ImageSubresourceLayers {
@@ -733,6 +733,27 @@ impl Renderer {
                     },
                 );
                 submissions.extend(wait_for);
+
+                // we do the barrier ourselves because we'll be sampling from the image next
+                let barrier = vk::ImageMemoryBarrier2KHR {
+                    src_stage_mask: vk::PipelineStageFlags2KHR::TRANSFER,
+                    src_access_mask: vk::AccessFlags2KHR::TRANSFER_WRITE,
+                    old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    dst_stage_mask: vk::PipelineStageFlags2KHR::FRAGMENT_SHADER,
+                    dst_access_mask: vk::AccessFlags2KHR::SHADER_SAMPLED_READ,
+                    image: image.image.get_handle(),
+                    subresource_range: image.image.get_whole_subresource_range(),
+                    ..Default::default()
+                };
+                let dependency_info = vk::DependencyInfoKHR {
+                    image_memory_barrier_count: 1,
+                    p_image_memory_barriers: &barrier,
+                    ..Default::default()
+                };
+                device
+                    .device()
+                    .cmd_pipeline_barrier_2_khr(cmd, &dependency_info);
             }
             submissions
         });
