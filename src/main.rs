@@ -5,6 +5,7 @@ mod hotreaload;
 mod parse;
 mod passes;
 mod recomputation;
+mod stl;
 mod yawpitch;
 
 use dolly::prelude::{Arm, Position, RightHanded, Smooth};
@@ -30,10 +31,15 @@ use hotreaload::{AsyncEvent, PollResult, ShaderModules, ShaderModulesConfig};
 use parse::math_into_glsl;
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
+use stl::write_stl;
 use std::cell::RefCell;
 use std::error::Error;
+use std::fs::{File, OpenOptions};
+use std::future::Future;
+use std::io::BufWriter;
 use std::ops::Deref;
-use std::sync::mpsc::Sender;
+use std::pin::Pin;
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
@@ -47,6 +53,11 @@ use crate::parse::{TotalF32, MAX_MARGIN, MIN_MARGIN};
 use crate::passes::{LambdaPass, MeshPass};
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
+
+enum ApplicationEvent {
+    MeshVerticesReady(Vec<glam::Vec3>),
+    MeshIndicesReady(Vec<u32>),
+}
 
 pub struct ApplicationState {
     camera: Transform<RightHanded>,
@@ -105,14 +116,17 @@ fn main() {
             .with(Arm::new(Vec3::Z * 120.0))
             .build();
 
-        let frame_data: Arc<Mutex<ApplicationState>> =
+        let (tx, rx) = mpsc::channel::<ApplicationEvent>();
+        let mut mesh_data = (None, None);
+        let app_data: Arc<Mutex<ApplicationState>> =
             Arc::new(Mutex::new(ApplicationState::default()));
+
         let mut prev = std::time::Instant::now();
-        let mut graph: Option<CompiledGraph> = None;
+        let mut graph: Option<GraphOutput> = None;
 
         let mut gui = GuiControl::new(
             modules.event_sender(),
-            frame_data.clone(),
+            app_data.clone(),
             &[
                 "128/sqrt((x)(x) + (y)(y)) - z",
                 "sin(2sqrt(x^2+y^2+z^2)/pi)",
@@ -141,6 +155,32 @@ fn main() {
 
             window_state.process_event(event);
             let window = window_state.window();
+
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    ApplicationEvent::MeshVerticesReady(a) => mesh_data.0 = Some(a),
+                    ApplicationEvent::MeshIndicesReady(a) => mesh_data.1 = Some(a),
+                }
+            }
+
+            if mesh_data.0.is_some() && mesh_data.1.is_some() {
+                let (Some(vertices), Some(indices)) = std::mem::take(&mut mesh_data) else {
+                    unreachable!();
+                };
+                
+                device.threadpool().spawn(move || {
+                    if let Some(path) = rfd::FileDialog::new().add_filter("stl", &["stl"]).save_file() {
+                        if let Ok(file) = OpenOptions::new().read(false).write(true).truncate(true).create(true).open(&path) {
+                            let mut writer = BufWriter::new(file);
+                            write_stl(writer, &vertices, &indices);
+                        } else {
+                            eprintln!("Failed to open {path:?}");
+                        }
+                    } else {
+                        eprintln!("FileDialog returned None");
+                    }                        
+                });
+            }
 
             for event in window_state.drain_events() {
                 match event {
@@ -196,7 +236,12 @@ fn main() {
                                     exit = true;
                                 }
 
-                                let (new_inner_size, drag_delta) = output.inner;
+                                let GuiOuput {
+                                    inner_size: new_inner_size,
+                                    drag_delta,
+                                    save_requested,
+                                } = output.inner;
+
                                 if Some(new_inner_size) != inner_size {
                                     inner_size = Some(new_inner_size);
                                     rebuild_graph = true;
@@ -209,15 +254,49 @@ fn main() {
                                         .rotate_yaw_pitch(drag_delta.x * m, drag_delta.y * m);
                                 }
 
+                                if save_requested {
+                                    device.write_multiple(|manager| {
+                                        let mut read = |buf: &object::Buffer, kind: fn(*const u8, usize) -> ApplicationEvent| {
+                                            let size = buf.get_create_info().size as usize;
+                                            let tx = tx.clone();
+                                            manager.read_buffer(
+                                                buf,
+                                                0,
+                                                std::alloc::Layout::from_size_align(size, 4)
+                                                    .unwrap(),
+                                                move |ptr| {
+                                                    let len = *ptr.add(4).cast::<u32>();
+                                                    // skip the size and offset fields at the start of the buffer
+                                                    let ptr = ptr.add(8);
+
+                                                    tx.send(kind(ptr, len as usize));
+                                                },
+                                                device,
+                                            );
+                                        };
+
+                                        read(&graph.vertices, |ptr, size| {
+                                            let vec = std::slice::from_raw_parts(ptr.cast::<glam::Vec3>(), size);
+                                            ApplicationEvent::MeshVerticesReady(vec.to_owned())
+                                        });
+                                        read(&graph.indices, |ptr, size| {
+                                            let vec = std::slice::from_raw_parts(ptr.cast::<u32>(), size);
+                                            ApplicationEvent::MeshIndicesReady(vec.to_owned())
+                                        });
+
+                                        manager.flush(device);
+                                    });
+                                }
+
                                 {
-                                    let mut lock = frame_data.lock().unwrap();
+                                    let mut lock = app_data.lock().unwrap();
                                     lock.camera = camera.final_transform;
                                     lock.primitives = output.primitives;
                                     lock.textures_delta.append(output.textures_delta);
                                     lock.pixels_per_point = window_state.pixels_per_point();
                                 }
 
-                                let result = graph.run(GraphRunConfig {
+                                let result = graph.graph.run(GraphRunConfig {
                                     swapchain_acquire_timeout_ns: 1_000_000_000 / 60,
                                     acquire_swapchain_with_fence: false,
                                     // we need to recreate some images if the swapchain size changed
@@ -249,7 +328,7 @@ fn main() {
                                 &swapchain,
                                 inner_size.unwrap_or([512; 2]),
                                 queue,
-                                frame_data.clone(),
+                                app_data.clone(),
                                 &mut modules,
                                 &mut compiler,
                                 &mut cache,
@@ -289,6 +368,12 @@ fn main() {
     }
 }
 
+struct GraphOutput {
+    vertices: object::Buffer,
+    indices: object::Buffer,
+    graph: CompiledGraph,
+}
+
 unsafe fn make_graph(
     swapchain: &object::Swapchain,
     function_extent: [u32; 2],
@@ -299,7 +384,7 @@ unsafe fn make_graph(
     cache: &mut RecomputationCache,
     egui_context: Arc<egui::Context>,
     device: &device::OwnedDevice,
-) -> Result<CompiledGraph, Box<dyn Error>> {
+) -> Result<GraphOutput, Box<dyn Error>> {
     macro_rules! args {
         ($($arg:expr),*) => {
             |state| {
@@ -469,7 +554,7 @@ unsafe fn make_graph(
         "vertex_indices",
     );
 
-    const INDEX_CAPACITY: u32 = 1024 * 1024;
+    const INDEX_CAPACITY: u32 = 1024 * 512 * 3;
     const VERTEX_CAPACITY: u32 = 1024 * 512;
 
     let vertices = create_buffer(
@@ -477,7 +562,7 @@ unsafe fn make_graph(
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::VERTEX_BUFFER,
-        (VERTEX_CAPACITY * 3 * 4) as u64,
+        (VERTEX_CAPACITY * 3 * 4) as u64 + 8,
         "vertices",
     );
     let indices = create_buffer(
@@ -485,7 +570,7 @@ unsafe fn make_graph(
             | vk::BufferUsageFlags::TRANSFER_DST
             | vk::BufferUsageFlags::STORAGE_BUFFER
             | vk::BufferUsageFlags::INDEX_BUFFER,
-        (INDEX_CAPACITY * 4) as u64,
+        (INDEX_CAPACITY * 4) as u64 + 8,
         "indices",
     );
 
@@ -647,7 +732,7 @@ unsafe fn make_graph(
         .expect("Compute pipelines have already been compiled, the all layout must be available")
         .into_inner();
 
-    let graph = compiler.compile(device.clone(), move |b| {
+    let graph = compiler.compile(device.clone(), |b| {
         let queue = b.import_queue(queue);
         let swapchain_image = b.acquire_swapchain(swapchain.clone());
 
@@ -663,8 +748,8 @@ unsafe fn make_graph(
         let intersections = b.import_image((intersections, "intersections"));
         let vertex_indices = b.import_image((vertex_indices, "vertex_indices"));
 
-        let vertices = b.import_buffer((vertices, "vertices"));
-        let indices = b.import_buffer((indices, "indices"));
+        let vertices = b.import_buffer((vertices.clone(), "vertices"));
+        let indices = b.import_buffer((indices.clone(), "indices"));
 
         struct GlobalDescriptorData {
             set: vk::DescriptorSet,
@@ -1170,7 +1255,11 @@ unsafe fn make_graph(
         );
     });
 
-    Ok(graph)
+    Ok(GraphOutput {
+        vertices,
+        indices,
+        graph,
+    })
 }
 
 unsafe fn make_device(

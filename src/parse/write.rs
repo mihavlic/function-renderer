@@ -124,10 +124,9 @@ impl GlslCompiler {
         options.set_generate_debug_info();
         options.set_include_callback(|name, _, _, _| {
             let path = PathBuf::from_str("shaders").unwrap().join(name);
-            let Ok(full) = path
-                .canonicalize()  else {
-                    return Err(format!("'{path:?}' does not exist"));
-                };
+            let Ok(full) = path.canonicalize() else {
+                return Err(format!("'{path:?}' does not exist"));
+            };
 
             let Ok(content) = std::fs::read_to_string(&full) else {
                 return Err(format!("'{path:?}' is not a file"));

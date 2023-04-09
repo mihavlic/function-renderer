@@ -82,11 +82,11 @@ enum ControlKind {
     Center,
     Interval,
 }
-#[derive(Default)]
+
 pub struct GuiOuput {
-    pub should_exit: bool,
-    pub injected_events: Vec<winit::event::Event<'static, ()>>,
+    pub inner_size: [u32; 2],
     pub drag_delta: egui::Vec2,
+    pub save_requested: bool,
 }
 
 pub struct GuiControl {
@@ -138,11 +138,12 @@ impl GuiControl {
             open_settings: false,
         }
     }
-    pub fn ui(&mut self, window: &WindowState) -> ([u32; 2], egui::Vec2) {
+    pub fn ui(&mut self, window: &WindowState) -> GuiOuput {
         let mut new_index = None;
         let mut size = None;
         let mut drag = egui::Vec2::ZERO;
         let mut cog_corner = egui::Pos2::ZERO;
+        let mut save_requested = false;
 
         custom_window_frame(
             window,
@@ -162,12 +163,21 @@ impl GuiControl {
                     if cog_response.clicked() {
                         self.open_settings ^= true;
                     }
+
+                    if icon_button(ui, icons::DOWNLOAD).clicked() {
+                        save_requested = true;
+                    }
                 });
 
                 ui.allocate_ui_at_rect(middle, |ui| {
                     ui.with_layout(
                         egui::Layout::left_to_right(egui::Align::Center).with_cross_justify(true),
                         |ui| {
+                            if self.error.is_some() {
+                                // make the text outline red if there is an error
+                                ui.style_mut().visuals.selection.stroke.color = Color32::LIGHT_RED;
+                            }
+
                             ui.add_space((middle.width() - 320.0) / 2.0);
                             let id = egui::Id::new("function_text_input");
                             if egui::TextEdit::singleline(&mut self.edit)
@@ -314,6 +324,10 @@ impl GuiControl {
         let size = size.unwrap().size();
         let size = [size.x.round() as u32, size.y.round() as u32];
 
-        (size, drag)
+        GuiOuput {
+            inner_size: size,
+            drag_delta: drag,
+            save_requested,
+        }
     }
 }

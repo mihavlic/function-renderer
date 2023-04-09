@@ -30,6 +30,7 @@ glam = "0.23.0"
 dolly = "0.4.1"
 ahash = "0.8.3"
 shaderc = "0.8.2"
+rfd = "0.11.3"
 
 [profile.dev.package."egui"]
 opt-level = 2
