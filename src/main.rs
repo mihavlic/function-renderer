@@ -414,14 +414,14 @@ unsafe fn make_graph(
                     name: "main".into(),
                     specialization_info: None,
                 },
-                layout: all_layout.into_inner(),
+                layout: all_layout.inner,
                 base_pipeline: object::BasePipeline::None,
             };
 
             device.create_compute_pipeline(pipeline_info).unwrap()
         });
 
-        Ok(pipeline.into_inner())
+        Ok(pipeline.inner)
     };
 
     let create_image = |format: vk::Format,
@@ -455,7 +455,7 @@ unsafe fn make_graph(
                     )
                     .unwrap()
             })
-            .into_inner()
+            .inner
     };
 
     let create_buffer = |usage: vk::BufferUsageFlags, size: u64, label: &'static str| {
@@ -479,7 +479,7 @@ unsafe fn make_graph(
                     )
                     .unwrap()
             })
-            .into_inner()
+            .inner
     };
 
     let populate_grid = create_pipeline("shaders/populate_grid.comp")?;
@@ -665,7 +665,7 @@ unsafe fn make_graph(
 
             device.create_delayed_graphics_pipeline(pipeline_info)
         })
-        .into_inner();
+        .inner;
 
     let egui_pass = cache
         .borrow_mut()
@@ -713,13 +713,13 @@ unsafe fn make_graph(
                 &config, device,
             ))))
         })
-        .into_inner();
+        .inner;
 
     let whole_descriptor_pipeline_layout = cache
         .borrow()
         .get_named::<object::PipelineLayout>("all layout")
         .expect("Compute pipelines have already been compiled, the all layout must be available")
-        .into_inner();
+        .inner;
 
     let graph = compiler.compile(device.clone(), |b| {
         let queue = b.import_queue(queue);
@@ -1364,7 +1364,7 @@ unsafe fn make_swapchain(
     //     .unwrap();
     // assert_eq!(result, vk::Result::SUCCESS);
 
-    let mut present_mode = vk::PresentModeKHR::FIFO;
+    let present_mode = vk::PresentModeKHR::FIFO;
     // for mode in present_modes {
     //     if mode == vk::PresentModeKHR::MAILBOX {
     //         present_mode = vk::PresentModeKHR::MAILBOX;

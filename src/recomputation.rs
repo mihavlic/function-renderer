@@ -3,7 +3,6 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     hash::{BuildHasher, Hash, Hasher},
     ops::Deref,
-    rc::Rc,
 };
 
 use graph::storage::DefaultAhashRandomstate;
@@ -27,25 +26,10 @@ impl ComputationFingerprint {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct ComputationVersion {
-    fingerprint: ComputationFingerprint,
-    generation: u64,
-}
-
 #[derive(Clone)]
 pub struct ComputationResult<T> {
     pub fingerprint: ComputationFingerprint,
     pub inner: T,
-}
-
-impl<T> ComputationResult<T> {
-    pub fn fingerprint(&self) -> ComputationFingerprint {
-        self.fingerprint
-    }
-    pub fn into_inner(self) -> T {
-        self.inner
-    }
 }
 
 impl<T> Hash for ComputationResult<T> {
