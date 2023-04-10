@@ -210,9 +210,9 @@ pub enum BuiltingVariable {
     Y,
     Z,
     T,
-    X_normalized,
-    Y_normalized,
-    Z_normalized,
+    normalized_X,
+    normalized_Y,
+    normalized_Z,
 }
 
 impl BuiltingVariable {
@@ -222,9 +222,9 @@ impl BuiltingVariable {
             "Y" | "y" => Some(Self::Y),
             "Z" | "z" => Some(Self::Z),
             "t" => Some(Self::T),
-            "x_normalized" => Some(Self::X_normalized),
-            "y_normalized" => Some(Self::Y_normalized),
-            "z_normalized" => Some(Self::Z_normalized),
+            "normalized_x" => Some(Self::normalized_X),
+            "normalized_y" => Some(Self::normalized_Y),
+            "normalized_z" => Some(Self::normalized_Z),
             _ => None,
         }
     }
@@ -337,8 +337,12 @@ fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
             }
             _ if is_blankspace(cur) => continue,
             _ if is_identifier(cur) => {
-                let (ident, rest) = consume_any(str, is_identifier);
-                return Ok((Token::Ident(ident), rest));
+                if let 'x' | 'X' | 'y' | 'Y' | 'z' | 'Z' = cur {
+                    return Ok((Token::Ident(&str[0..1]), &str[1..]));
+                } else {
+                    let (ident, rest) = consume_any(str, is_identifier);
+                    return Ok((Token::Ident(ident), rest));
+                }
             }
             _ => {
                 return parse_error!("Unexpected character '{cur}'");

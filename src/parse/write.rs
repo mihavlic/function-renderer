@@ -21,9 +21,9 @@ pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, St
     let z = tape.add(SsaExpression::Builtin(BuiltingVariable::Z));
     let t = tape.add(SsaExpression::Builtin(BuiltingVariable::T));
 
-    let xn = tape.add(SsaExpression::Builtin(BuiltingVariable::X_normalized));
-    let yn = tape.add(SsaExpression::Builtin(BuiltingVariable::Y_normalized));
-    let zn = tape.add(SsaExpression::Builtin(BuiltingVariable::Z_normalized));
+    let xn = tape.add(SsaExpression::Builtin(BuiltingVariable::normalized_X));
+    let yn = tape.add(SsaExpression::Builtin(BuiltingVariable::normalized_Y));
+    let zn = tape.add(SsaExpression::Builtin(BuiltingVariable::normalized_Z));
     
     let min_margin = MIN_MARGIN / 63.0;
     let max_margin = 1.0 - MAX_MARGIN / 63.0;
@@ -38,10 +38,10 @@ pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, St
             let expr = format!("
                 max(
                     max(
-                        max({min_margin} - x_normalized, x_normalized - {max_margin}),
-                        max({min_margin} - y_normalized, y_normalized - {max_margin})
+                        max({min_margin} - normalized_x, normalized_x - {max_margin}),
+                        max({min_margin} - normalized_y, normalized_y - {max_margin})
                     ),
-                    max({min_margin} - z_normalized, z_normalized - {max_margin})
+                    max({min_margin} - normalized_z, normalized_z - {max_margin})
                 )
             ");
             let expr = parse_math(&expr).unwrap();

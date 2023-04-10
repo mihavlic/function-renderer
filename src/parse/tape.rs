@@ -354,13 +354,13 @@ impl Tape {
                     }
                     SsaExpression::Constant(_) => write!(f, "vec3 {dout} = vec3(0.0)"),
                     SsaExpression::Builtin(b) => match b {
-                        BuiltingVariable::X | BuiltingVariable::X_normalized => {
+                        BuiltingVariable::X | BuiltingVariable::normalized_X => {
                             write!(f, "vec3 {dout} = vec3(1.0, 0.0, 0.0)")
                         }
-                        BuiltingVariable::Y | BuiltingVariable::Y_normalized => {
+                        BuiltingVariable::Y | BuiltingVariable::normalized_Y => {
                             write!(f, "vec3 {dout} = vec3(0.0, 1.0, 0.0)")
                         }
-                        BuiltingVariable::Z | BuiltingVariable::Z_normalized => {
+                        BuiltingVariable::Z | BuiltingVariable::normalized_Z => {
                             write!(f, "vec3 {dout} = vec3(0.0, 0.0, 1.0)")
                         }
                         BuiltingVariable::T => write!(f, "vec3 {dout} = vec3(0.0, 0.0, 0.0)"),

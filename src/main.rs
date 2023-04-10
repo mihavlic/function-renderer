@@ -126,6 +126,7 @@ fn main() {
                 "cos(abs(x)) + cos(abs(y)) + cos(abs(z)) - cos(x^2+y^2+z^2)",
                 "|x| + |y| - z",
                 "8*sin(sqrt(x^2 + y^2) / 2pi) - z",
+                "-(e^sqrt((x*x + y*y)) + z*100000)"
             ],
         );
 
