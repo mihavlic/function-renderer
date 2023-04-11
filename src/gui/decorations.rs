@@ -14,19 +14,21 @@ pub fn custom_window_frame(
     let ctx = window.ctx();
     let style = ctx.style();
 
-    let mut stroke = style.visuals.widgets.noninteractive.fg_stroke;
-    stroke.color = egui::Color32::from_gray(60);
+    let stroke = egui::Stroke {
+        width: ctx.pixels_per_point().recip(),
+        color: egui::Color32::BLACK,
+    };
     let mut panel_frame = egui::Frame {
         fill: style.visuals.window_fill(),
         rounding: egui::Rounding {
-            nw: 10.0,
-            ne: 10.0,
+            nw: 8.0,
+            ne: 8.0,
             sw: 0.0,
             se: 0.0,
         },
         stroke,
         inner_margin: 0.0.into(),
-        outer_margin: 10.5.into(),
+        outer_margin: 10.0.into(),
         shadow: egui::epaint::Shadow {
             extrusion: 10.0,
             color: if window.window().has_focus() {
@@ -61,7 +63,9 @@ pub fn custom_window_frame(
                 let mut rect = app_rect;
                 rect.min.y = title_bar_rect.max.y;
                 // fix some rounding issues
-                rect.max -= egui::Vec2::splat(ctx.pixels_per_point().recip() / 2.0);
+                let epsilon = egui::Vec2::splat(ctx.pixels_per_point().recip() / 2.0);
+                rect.min -= epsilon;
+                rect.max -= epsilon;
                 rect
             };
 
@@ -108,10 +112,7 @@ fn title_bar_ui(
 
     // Paint the line under the title:
     painter.line_segment(
-        [
-            title_bar_rect.left_bottom() + vec2(1.0, 0.0),
-            title_bar_rect.right_bottom() + vec2(-1.0, 0.0),
-        ],
+        [title_bar_rect.left_bottom(), title_bar_rect.right_bottom()],
         ui.visuals().widgets.noninteractive.bg_stroke,
     );
 

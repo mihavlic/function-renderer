@@ -60,6 +60,9 @@ pub struct WindowState {
 impl WindowState {
     pub fn new(window: Window, event_loop: &winit::event_loop::EventLoopWindowTarget<()>) -> Self {
         let egui = egui::Context::default();
+        egui.tessellation_options_mut(|o| {
+            o.feathering = false;
+        });
         set_fonts(&egui);
         let mut egui_winit = egui_winit::State::new(event_loop);
         egui_winit.set_max_texture_side(8192);

@@ -1,6 +1,6 @@
 /// Writes an indexed triangle list mesh to an stl,
 /// header and attribute fields are zero
-/// see https://en.wikipedia.org/wiki/STL_(file_format)#Binary_STL
+/// see <https://en.wikipedia.org/wiki/STL_(file_format)#Binary_STL>
 pub fn write_stl(
     mut writer: impl std::io::Write,
     vertices: &[glam::Vec3],
