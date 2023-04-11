@@ -43,6 +43,7 @@ use crate::gui::{PaintConfig, RendererConfig};
 use crate::passes::{LambdaPass, MeshPass};
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
+pub const EGUI_MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C8;
 
 enum ApplicationEvent {
     MeshVerticesReady(Vec<glam::Vec3>),
@@ -511,15 +512,13 @@ unsafe fn make_graph(
         )
     });
     let vk::Extent2D { width, height } = swapchain.get_extent();
-    let window_color_image = (MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1).then(|| {
-        create_image(
-            vk::Format::B8G8R8A8_UNORM,
-            MSAA_SAMPLE_COUNT,
-            object::Extent::D2(width, height),
-            vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            "resolve",
-        )
-    });
+    let window_color_image = create_image(
+        vk::Format::B8G8R8A8_UNORM,
+        EGUI_MSAA_SAMPLE_COUNT,
+        object::Extent::D2(width, height),
+        vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        "resolve",
+    );
 
     let function_values = create_image(
         vk::Format::R16_SFLOAT,
@@ -670,30 +669,11 @@ unsafe fn make_graph(
     let egui_pass = cache
         .borrow_mut()
         .compute_located(args!(), args!(), || {
-            let config = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
+            let config = 
                 RendererConfig {
                     output_attachment_is_unorm_nonlinear: true,
                     format: vk::Format::B8G8R8A8_UNORM,
-                    samples: MSAA_SAMPLE_COUNT,
-                    color_load_op: vk::AttachmentLoadOp::CLEAR,
-                    color_store_op: vk::AttachmentStoreOp::STORE,
-                    color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                    color_src_stages: vk::PipelineStageFlags::empty(),
-                    color_src_access: vk::AccessFlags::empty(),
-                    color_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                    resolve_enable: false,
-                    resolve_load_op: Default::default(),
-                    resolve_store_op: Default::default(),
-                    resolve_src_layout: Default::default(),
-                    resolve_src_stages: Default::default(),
-                    resolve_src_access: Default::default(),
-                    resolve_final_layout: Default::default(),
-                }
-            } else {
-                RendererConfig {
-                    output_attachment_is_unorm_nonlinear: true,
-                    format: vk::Format::B8G8R8A8_UNORM,
-                    samples: MSAA_SAMPLE_COUNT,
+                    samples: EGUI_MSAA_SAMPLE_COUNT,
                     color_load_op: vk::AttachmentLoadOp::CLEAR,
                     color_store_op: vk::AttachmentStoreOp::DONT_CARE,
                     color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
@@ -707,8 +687,7 @@ unsafe fn make_graph(
                     resolve_src_stages: vk::PipelineStageFlags::empty(),
                     resolve_src_access: vk::AccessFlags::empty(),
                     resolve_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                }
-            };
+                };
             Arc::new(Mutex::new(UnsafeSendSync::new(gui::Renderer::new(
                 &config, device,
             ))))
@@ -728,7 +707,7 @@ unsafe fn make_graph(
         let depth = b.import_image((depth_image, "depth"));
         let color = b.import_image((color_image.clone(), "color"));
         let window_color =
-            window_color_image.map(|window_color| b.import_image((window_color, "window_color")));
+            b.import_image((window_color_image, "window_color"));
         let resolve = resolve_image
             .clone()
             .map(|resolve| b.import_image((resolve, "resolve")));
@@ -1108,16 +1087,14 @@ unsafe fn make_graph(
             queue,
             LambdaPass(
                 move |builder| {
-                    if MSAA_SAMPLE_COUNT != vk::SampleCountFlags::C1 {
-                        builder.use_image(
-                            window_color.unwrap(),
-                            vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                            vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
-                            vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
-                            vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                            None,
-                        );
-                    };
+                    builder.use_image(
+                        window_color,
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                        vk::PipelineStageFlags2KHR::COLOR_ATTACHMENT_OUTPUT,
+                        vk::AccessFlags2KHR::COLOR_ATTACHMENT_WRITE,
+                        vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                        None,
+                    );
                     builder.use_image(
                         swapchain_image,
                         vk::ImageUsageFlags::COLOR_ATTACHMENT,
@@ -1167,26 +1144,7 @@ unsafe fn make_graph(
 
                     let clear = vk::ClearColorValue { float_32: [0.0; 4] };
                     let (width, height) = e.get_image_extent(swapchain_image).get_2d().unwrap();
-                    let config = if MSAA_SAMPLE_COUNT == vk::SampleCountFlags::C1 {
-                        PaintConfig {
-                            command_buffer: e.command_buffer(),
-                            queue_family: e.get_current_queue().family(),
-                            submission: e.get_current_submission(),
-                            color_view: swapchain_view,
-                            color_flags: swapchain_flags.unwrap_or_default(),
-                            color_usage: swapchain_usage,
-                            color_view_formats: formats,
-                            resolve_view: Default::default(),
-                            resolve_flags: Default::default(),
-                            resolve_usage: Default::default(),
-                            resolve_view_formats: Default::default(),
-                            clear: Some(clear),
-                            pixels_per_point: data.pixels_per_point,
-                            primitives: &data.primitives,
-                            textures_delta: &data.textures_delta,
-                            size: [width, height],
-                        }
-                    } else {
+                    let config = {
                         let (
                             color_view,
                             color_flags,
@@ -1194,7 +1152,7 @@ unsafe fn make_graph(
                             _color_format,
                             color_width,
                             color_height,
-                        ) = get_image_info(window_color.unwrap());
+                        ) = get_image_info(window_color);
                         assert_eq!([width, height], [color_width, color_height]);
 
                         PaintConfig {

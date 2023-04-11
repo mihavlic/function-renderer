@@ -61,6 +61,7 @@ impl WindowState {
     pub fn new(window: Window, event_loop: &winit::event_loop::EventLoopWindowTarget<()>) -> Self {
         let egui = egui::Context::default();
         egui.tessellation_options_mut(|o| {
+            // we're rendering things with msaa, this is not needed?
             o.feathering = false;
         });
         set_fonts(&egui);
