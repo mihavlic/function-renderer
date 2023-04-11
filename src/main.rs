@@ -22,19 +22,19 @@ use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
-use gui::{GuiControl, GuiOuput, WindowState,};
-use hotreaload::{ PollResult, ShaderModules, ShaderModulesConfig};
+use gui::{GuiControl, GuiOuput, WindowState};
+use hotreaload::{PollResult, ShaderModules, ShaderModulesConfig};
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
-use stl::write_stl;
 use std::cell::RefCell;
 use std::error::Error;
-use std::fs::{OpenOptions};
+use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::sync::mpsc::{self};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use winit::event::{ Event, MouseScrollDelta, WindowEvent};
+use stl::write_stl;
+use winit::event::{Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
@@ -102,7 +102,7 @@ fn main() {
 
         let mut camera: CameraRig = CameraRig::builder()
             .with(Position::new(Vec3::splat(31.5)))
-            .with(YawPitchZUp::new().pitch_degrees(25.0).yaw_degrees(0.0))
+            .with(YawPitchZUp::new().pitch_degrees(35.0).yaw_degrees(0.0))
             .with(Smooth::new_rotation(0.25))
             .with(Arm::new(Vec3::Z * 120.0))
             .build();
@@ -119,7 +119,6 @@ fn main() {
             modules.event_sender(),
             app_data.clone(),
             &[
-                "128/sqrt((x)(x) + (y)(y)) - z",
                 "sin(2sqrt(x^2+y^2+z^2)/pi)",
                 "2000/(x y) - z + 15",
                 "y - z",
@@ -127,7 +126,8 @@ fn main() {
                 "cos(abs(x)) + cos(abs(y)) + cos(abs(z)) - cos(x^2+y^2+z^2)",
                 "|x| + |y| - z",
                 "8*sin(sqrt(x^2 + y^2) / 2pi) - z",
-                "-(e^sqrt((x*x + y*y)) + z*100000)"
+                "-(e^sqrt((x*x + y*y)) + z*100000)",
+                "128/sqrt(xx + yy) - z",
             ],
         );
 
@@ -171,7 +171,7 @@ fn main() {
                         }
                     } else {
                         eprintln!("FileDialog returned None");
-                    }                        
+                    }
                 });
             }
 
@@ -669,25 +669,24 @@ unsafe fn make_graph(
     let egui_pass = cache
         .borrow_mut()
         .compute_located(args!(), args!(), || {
-            let config = 
-                RendererConfig {
-                    output_attachment_is_unorm_nonlinear: true,
-                    format: vk::Format::B8G8R8A8_UNORM,
-                    samples: EGUI_MSAA_SAMPLE_COUNT,
-                    color_load_op: vk::AttachmentLoadOp::CLEAR,
-                    color_store_op: vk::AttachmentStoreOp::DONT_CARE,
-                    color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                    color_src_stages: vk::PipelineStageFlags::empty(),
-                    color_src_access: vk::AccessFlags::empty(),
-                    color_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                    resolve_enable: true,
-                    resolve_load_op: vk::AttachmentLoadOp::DONT_CARE,
-                    resolve_store_op: vk::AttachmentStoreOp::STORE,
-                    resolve_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                    resolve_src_stages: vk::PipelineStageFlags::empty(),
-                    resolve_src_access: vk::AccessFlags::empty(),
-                    resolve_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
-                };
+            let config = RendererConfig {
+                output_attachment_is_unorm_nonlinear: true,
+                format: vk::Format::B8G8R8A8_UNORM,
+                samples: EGUI_MSAA_SAMPLE_COUNT,
+                color_load_op: vk::AttachmentLoadOp::CLEAR,
+                color_store_op: vk::AttachmentStoreOp::DONT_CARE,
+                color_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                color_src_stages: vk::PipelineStageFlags::empty(),
+                color_src_access: vk::AccessFlags::empty(),
+                color_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                resolve_enable: true,
+                resolve_load_op: vk::AttachmentLoadOp::DONT_CARE,
+                resolve_store_op: vk::AttachmentStoreOp::STORE,
+                resolve_src_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+                resolve_src_stages: vk::PipelineStageFlags::empty(),
+                resolve_src_access: vk::AccessFlags::empty(),
+                resolve_final_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL_KHR,
+            };
             Arc::new(Mutex::new(UnsafeSendSync::new(gui::Renderer::new(
                 &config, device,
             ))))
@@ -706,8 +705,7 @@ unsafe fn make_graph(
 
         let depth = b.import_image((depth_image, "depth"));
         let color = b.import_image((color_image.clone(), "color"));
-        let window_color =
-            b.import_image((window_color_image, "window_color"));
+        let window_color = b.import_image((window_color_image, "window_color"));
         let resolve = resolve_image
             .clone()
             .map(|resolve| b.import_image((resolve, "resolve")));
@@ -726,69 +724,67 @@ unsafe fn make_graph(
 
         let whole_descriptor_pipeline_layout_copy = whole_descriptor_pipeline_layout.clone();
         let state_copy = state.clone();
-        let get_or_create_descriptor =
-            move |e: &GraphExecutor| -> GlobalDescriptorData {
-                #[repr(C)]
-                struct FunctionData {
-                    rect_min: Vec3,
-                    rect_max: Vec3,
-                    time: f32,
-                }
+        let get_or_create_descriptor = move |e: &GraphExecutor| -> GlobalDescriptorData {
+            #[repr(C)]
+            struct FunctionData {
+                rect_min: Vec3,
+                rect_max: Vec3,
+                time: f32,
+            }
 
-                let data = {
-                    let state = state_copy.lock().unwrap();
-                    FunctionData {
-                        rect_min: state.rect_min,
-                        rect_max: state.rect_max,
-                        time: state.time,
-                    }
-                };
-
-                let uniform = e.allocate_uniform_element(&data);
-
-                let (set, dynamic_offsets) = DescSetBuilder::new(
-                    &whole_descriptor_pipeline_layout_copy.get_descriptor_set_layouts()[0],
-                )
-                .update_whole(&[
-                    DescriptorData::Image(DescImage {
-                        view: e.get_default_image_view(function_values),
-                        layout: vk::ImageLayout::GENERAL,
-                        ..Default::default()
-                    }),
-                    DescriptorData::Image(DescImage {
-                        view: e.get_default_image_view(intersections),
-                        layout: vk::ImageLayout::GENERAL,
-                        ..Default::default()
-                    }),
-                    DescriptorData::Image(DescImage {
-                        view: e.get_default_image_view(vertex_indices),
-                        layout: vk::ImageLayout::GENERAL,
-                        ..Default::default()
-                    }),
-                    DescriptorData::Buffer(DescBuffer {
-                        buffer: e.get_buffer(vertices),
-                        ..Default::default()
-                    }),
-                    DescriptorData::Buffer(DescBuffer {
-                        buffer: e.get_buffer(indices),
-                        ..Default::default()
-                    }),
-                    DescriptorData::Buffer(uniform.as_desc_dynamic()),
-                ])
-                .finish(e)
-                .into_raw();
-
-                GlobalDescriptorData {
-                    set,
-                    dynamic_offsets,
+            let data = {
+                let state = state_copy.lock().unwrap();
+                FunctionData {
+                    rect_min: state.rect_min,
+                    rect_max: state.rect_max,
+                    time: state.time,
                 }
             };
 
+            let uniform = e.allocate_uniform_element(&data);
+
+            let (set, dynamic_offsets) = DescSetBuilder::new(
+                &whole_descriptor_pipeline_layout_copy.get_descriptor_set_layouts()[0],
+            )
+            .update_whole(&[
+                DescriptorData::Image(DescImage {
+                    view: e.get_default_image_view(function_values),
+                    layout: vk::ImageLayout::GENERAL,
+                    ..Default::default()
+                }),
+                DescriptorData::Image(DescImage {
+                    view: e.get_default_image_view(intersections),
+                    layout: vk::ImageLayout::GENERAL,
+                    ..Default::default()
+                }),
+                DescriptorData::Image(DescImage {
+                    view: e.get_default_image_view(vertex_indices),
+                    layout: vk::ImageLayout::GENERAL,
+                    ..Default::default()
+                }),
+                DescriptorData::Buffer(DescBuffer {
+                    buffer: e.get_buffer(vertices),
+                    ..Default::default()
+                }),
+                DescriptorData::Buffer(DescBuffer {
+                    buffer: e.get_buffer(indices),
+                    ..Default::default()
+                }),
+                DescriptorData::Buffer(uniform.as_desc_dynamic()),
+            ])
+            .finish(e)
+            .into_raw();
+
+            GlobalDescriptorData {
+                set,
+                dynamic_offsets,
+            }
+        };
+
         let bind_descriptor = move |e: &GraphExecutor, device: &Device| {
             let mut blackboard = e.execution_blackboard_mut();
-            let data = blackboard.get_or_insert_with::<GlobalDescriptorData, _>(|| {
-                get_or_create_descriptor(e)
-            });
+            let data = blackboard
+                .get_or_insert_with::<GlobalDescriptorData, _>(|| get_or_create_descriptor(e));
 
             device.device().cmd_bind_descriptor_sets(
                 e.command_buffer(),

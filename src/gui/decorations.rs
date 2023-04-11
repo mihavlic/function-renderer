@@ -14,10 +14,6 @@ pub fn custom_window_frame(
     let ctx = window.ctx();
     let style = ctx.style();
 
-    let stroke = egui::Stroke {
-        width: ctx.pixels_per_point().recip(),
-        color: egui::Color32::BLACK,
-    };
     let mut panel_frame = egui::Frame {
         fill: style.visuals.window_fill(),
         rounding: egui::Rounding {
@@ -26,7 +22,7 @@ pub fn custom_window_frame(
             sw: 0.0,
             se: 0.0,
         },
-        stroke,
+        stroke: egui::Stroke::NONE,
         inner_margin: 0.0.into(),
         outer_margin: 10.0.into(),
         shadow: egui::epaint::Shadow {
@@ -111,9 +107,11 @@ fn title_bar_ui(
     }
 
     // Paint the line under the title:
+    let mut stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+    stroke.width = 0.5;
     painter.line_segment(
         [title_bar_rect.left_bottom(), title_bar_rect.right_bottom()],
-        ui.visuals().widgets.noninteractive.bg_stroke,
+        stroke,
     );
 
     // Interact with the title bar (drag to move window):
