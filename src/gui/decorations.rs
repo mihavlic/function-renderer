@@ -21,8 +21,8 @@ pub fn custom_window_frame(
     let mut panel_frame = egui::Frame {
         fill: style.visuals.window_fill(),
         rounding: egui::Rounding {
-            nw: 8.0,
-            ne: 8.0,
+            nw: 10.0,
+            ne: 10.0,
             sw: 0.0,
             se: 0.0,
         },
