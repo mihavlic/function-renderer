@@ -473,7 +473,7 @@ unsafe fn make_graph(
                             label: Some(label.into()),
                         },
                         vma::AllocationCreateInfo {
-                            flags: vma::AllocationCreateFlags::empty(),
+                            flags: vma::AllocationCreateFlags::HOST_ACCESS_ALLOW_TRANSFER_INSTEAD | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                             usage: vma::MemoryUsage::AutoPreferDevice,
                             ..Default::default()
                         },
@@ -1337,7 +1337,7 @@ unsafe fn make_swapchain(
         array_layers: 1,
         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
         pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
-        composite_alpha: vk::CompositeAlphaFlagsKHR::INHERIT,
+        composite_alpha: vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
         present_mode,
         clipped: true,
     };
