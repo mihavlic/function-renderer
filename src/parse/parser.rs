@@ -337,6 +337,7 @@ fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
             }
             _ if is_blankspace(cur) => continue,
             _ if is_identifier(cur) => {
+                // these variables are eagerly matched to allow expressions like `log(xy)`
                 if let 'x' | 'X' | 'y' | 'Y' | 'z' | 'Z' = cur {
                     return Ok((Token::Ident(&str[0..1]), &str[1..]));
                 } else {
