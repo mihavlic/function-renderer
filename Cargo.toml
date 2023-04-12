@@ -8,9 +8,6 @@ edition = "2021"
 [patch.'https://github.com/mihavlic/vulkan-bindings']
 pumice = { path = "./pumice" }
 
-[patch.'https://github.com/mihavlic/vulkan-engine']
-graph = { path = "../vulkan-engine" }
-
 [dependencies]
 pumice = {git = "https://github.com/mihavlic/vulkan-bindings.git", features = ["wrappers"]}
 pumice-vma = {git = "https://github.com/mihavlic/pumice-vma.git", features = ["VK_VERSION_1_1"]}
