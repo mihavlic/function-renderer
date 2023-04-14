@@ -2,8 +2,7 @@
 name = "function-renderer"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+resolver = "2"
 
 [patch.'https://github.com/mihavlic/vulkan-bindings']
 pumice = { path = "./pumice" }
@@ -25,7 +24,7 @@ glam = "0.23.0"
 dolly = "0.4.1"
 ahash = "0.8.3"
 shaderc = "0.8.2"
-rfd = "0.11.3"
+rfd = {version = "0.11.3", default-features = false, features = ["xdg-portal"] }
 
 [profile.dev.package."egui"]
 opt-level = 2
@@ -35,8 +34,8 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package."pumice-vma"]
 opt-level = 2
-# [profile.dev.package."graph"]
-# opt-level = 2
+[profile.dev.package."graph"]
+opt-level = 2
 [profile.dev.package."winit"]
 opt-level = 2
 [profile.dev.package."notify"]
