@@ -1,3 +1,5 @@
+#![allow(unreachable_code, dead_code)]
+
 mod gui;
 mod hotreaload;
 mod parse;
@@ -43,7 +45,7 @@ use crate::gui::{PaintConfig, RendererConfig};
 use crate::passes::{LambdaPass, MeshPass};
 
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
-pub const EGUI_MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C8;
+pub const EGUI_MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C4;
 
 enum ApplicationEvent {
     MeshVerticesReady(Vec<glam::Vec3>),
@@ -139,10 +141,10 @@ fn main() {
         let mut inner_size = None;
 
         event_loop.run(move |event, _, control_flow| {
-            let mut device = device_option.as_mut().unwrap();
-            let mut swapchain = swapchain_option.as_mut().unwrap();
-            let mut modules = modules_option.as_mut().unwrap();
-            let mut cache = cache_option.as_mut().unwrap();
+            let device = device_option.as_mut().unwrap();
+            let swapchain = swapchain_option.as_mut().unwrap();
+            let modules = modules_option.as_mut().unwrap();
+            let cache = cache_option.as_mut().unwrap();
 
             window_state.process_event(event);
             let window = window_state.window();
@@ -321,9 +323,9 @@ fn main() {
                                 inner_size.unwrap_or([512; 2]),
                                 queue,
                                 app_data.clone(),
-                                &mut modules,
+                                modules,
                                 &mut compiler,
-                                &mut cache,
+                                cache,
                                 &device,
                             );
 
@@ -342,7 +344,7 @@ fn main() {
                         }
                     }
                     Event::LoopDestroyed => {
-                        // the vulkan context cleanup takes like 800 ms, this makes it go fast!
+                        // the vulkan context teardown takes like 800 ms, this makes it go fast!
                         std::process::exit(0);
 
                         drop(graph.take());
