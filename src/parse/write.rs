@@ -1,11 +1,10 @@
-use crate::parse::{self, BinaryOperation, BuiltingVariable, SsaExpression, Tape};
+use crate::{
+    embed::MaybeFile,
+    parse::{self, BinaryOperation, BuiltingVariable, SsaExpression, Tape},
+};
 use pumice::vk;
 use shaderc::ShaderKind;
-use std::{
-    error::Error,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{error::Error, path::Path};
 
 use super::{parse_math, parser, TotalF32, UnaryOperation};
 
@@ -110,24 +109,32 @@ pub struct GlslCompiler {
 }
 
 impl GlslCompiler {
-    pub fn new() -> Self {
+    pub fn new(includes: &[(&str, MaybeFile)]) -> Self {
+        let includes = includes
+            .into_iter()
+            .map(|(name, file)| ((*name).to_owned(), *file))
+            .collect::<Vec<_>>();
+
         let compiler = shaderc::Compiler::new().unwrap();
         let mut options = shaderc::CompileOptions::new().unwrap();
         options.set_target_env(shaderc::TargetEnv::Vulkan, vk::API_VERSION_1_1);
         options.set_generate_debug_info();
-        options.set_include_callback(|name, _, _, _| {
-            let path = PathBuf::from_str("shaders").unwrap().join(name);
-            let Ok(full) = path.canonicalize() else {
-                return Err(format!("'{path:?}' does not exist"));
+        options.set_include_callback(move |name, _, _, _| {
+            let found = includes
+                .iter()
+                .find(|(include_name, _)| *include_name == name);
+
+            let Some((_, file)) = found else {
+                return Err(format!("'{name:?}' does not exist"));
             };
 
-            let Ok(content) = std::fs::read_to_string(&full) else {
-                return Err(format!("'{path:?}' is not a file"));
+            let Ok(content) = file.read() else {
+                return Err(format!("'{:?}' is not a file", file.path()));
             };
 
             Ok(shaderc::ResolvedInclude {
-                resolved_name: full.to_str().unwrap().to_owned(),
-                content,
+                resolved_name: file.as_str().to_owned(),
+                content: std::str::from_utf8(&content).unwrap().to_string(),
             })
         });
 

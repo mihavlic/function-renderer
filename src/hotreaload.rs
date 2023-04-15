@@ -12,6 +12,7 @@ use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
+use crate::embed::MaybeFile;
 use crate::parse::{self, math_into_glsl, parse_math, GlslCompiler};
 use graph::device;
 use graph::object;
@@ -76,7 +77,11 @@ pub enum ShaderModulesConfig<'a> {
 }
 
 impl ShaderModules {
-    pub fn new(config: ShaderModulesConfig, thickness: bool) -> Self {
+    pub fn new(
+        config: ShaderModulesConfig,
+        thickness: bool,
+        includes: &[(&str, MaybeFile)],
+    ) -> Self {
         let (sender, receiver) = mpsc::channel();
 
         let sender_copy = sender.clone();
@@ -153,7 +158,7 @@ impl ShaderModules {
             receiver,
             sender,
             stdin: None,
-            compiler: GlslCompiler::new(),
+            compiler: GlslCompiler::new(includes),
         };
 
         match config {
@@ -283,14 +288,14 @@ impl ShaderModules {
     }
     pub unsafe fn retrieve(
         &mut self,
-        path: impl AsRef<Path>,
+        file: MaybeFile,
         device: &device::Device,
     ) -> Result<Rc<ModuleEntry>, Box<dyn Error>> {
-        let path = path.as_ref().canonicalize().unwrap();
+        let path = file.path();
 
         let make_new = |generation: u32| -> Result<(Rc<ModuleEntry>, bool), Box<dyn Error>> {
-            let source = std::fs::read(&path)?;
-            let mut source = String::from_utf8(source)?;
+            let source = file.read()?;
+            let mut source = std::str::from_utf8(&source)?.to_owned();
 
             // I would've used the preprocessor to insert the function but then the function isn't
             // available in the sourcecode which makes the vscode plugin unhappy and I can't make
@@ -326,7 +331,7 @@ impl ShaderModules {
             ))
         };
 
-        match self.modules.entry(path.clone()) {
+        match self.modules.entry(path.to_owned()) {
             Entry::Occupied(mut exists) => {
                 let meta = exists.get_mut();
                 if meta.dirty {
@@ -348,10 +353,12 @@ impl ShaderModules {
                     dirty: false,
                 });
 
-                assert!(&path.exists());
-                self.watcher
-                    .watch(&path, notify::RecursiveMode::NonRecursive)
-                    .unwrap();
+                if !file.is_embedded() {
+                    assert!(file.path().exists());
+                    self.watcher
+                        .watch(&path, notify::RecursiveMode::NonRecursive)
+                        .unwrap();
+                }
 
                 Ok(new)
             }

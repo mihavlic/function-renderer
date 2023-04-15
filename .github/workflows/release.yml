@@ -36,12 +36,12 @@ jobs:
 
     - name: Build release binary (linux)
       run: |
-        RUSTFLAGS="-C panic=abort" cargo build --release --target $LINUX_TARGET
+        RUSTFLAGS="-C panic=abort" cargo build --release --features embed --target $LINUX_TARGET
         strip target/$LINUX_TARGET/release/function-renderer
 
     - name: Build release binary (windows)
       run: |
-        RUSTFLAGS="-C panic=abort" cargo build --release --target $WINDOWS_TARGET
+        RUSTFLAGS="-C panic=abort" cargo build --release --features embed --target $WINDOWS_TARGET
 
     - name: Build archives
       run: |

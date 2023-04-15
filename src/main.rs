@@ -1,12 +1,13 @@
 #![allow(unreachable_code, dead_code)]
 
-mod gui;
-mod hotreaload;
-mod parse;
-mod passes;
-mod recomputation;
-mod stl;
-mod yawpitch;
+pub mod gui;
+pub mod hotreaload;
+pub mod parse;
+pub mod passes;
+pub mod recomputation;
+pub mod stl;
+pub mod yawpitch;
+pub mod embed;
 
 use dolly::prelude::{Arm, Position, RightHanded, Smooth};
 use dolly::rig::CameraRig;
@@ -41,6 +42,7 @@ use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
 
+use crate::embed::{MaybeFile, maybe_embed_file};
 use crate::gui::{PaintConfig, RendererConfig};
 use crate::passes::{LambdaPass, MeshPass};
 
@@ -98,6 +100,9 @@ fn main() {
             // ShaderModulesConfig::Static("sin(2sqrt(x*x+y*y+z*z)/pi)"),
             ShaderModulesConfig::None,
             true,
+            &[
+                ("compute_descriptors.glsl", maybe_embed_file!("shaders/compute_descriptors.glsl"))
+            ]
         );
         let cache = RecomputationCache::new();
         let mut compiler = GraphCompiler::new();
@@ -390,7 +395,7 @@ unsafe fn make_graph(
 
     let cache = RefCell::new(cache);
 
-    let mut create_pipeline = |path: &str| -> Result<_, Box<dyn Error>> {
+    let mut create_pipeline = |path: MaybeFile| -> Result<_, Box<dyn Error>> {
         let mut cache = cache.borrow_mut();
         let module = modules.retrieve(path, device)?;
 
@@ -407,7 +412,7 @@ unsafe fn make_graph(
                 .unwrap()
             });
 
-        let pipeline = cache.compute_located(args!(path), args!(module), || {
+        let pipeline = cache.compute_located(args!(path.as_str()), args!(module), || {
             let pipeline_info = object::ComputePipelineCreateInfo {
                 flags: vk::PipelineCreateFlags::empty(),
                 stage: PipelineStage {
@@ -485,10 +490,10 @@ unsafe fn make_graph(
             .inner
     };
 
-    let populate_grid = create_pipeline("shaders/populate_grid.comp")?;
-    let intersect = create_pipeline("shaders/intersect.comp")?;
-    let compute_vertex = create_pipeline("shaders/compute_vertex.comp")?;
-    let emit_triangles = create_pipeline("shaders/emit_triangles.comp")?;
+    let populate_grid = create_pipeline(maybe_embed_file!("shaders/populate_grid.comp"))?;
+    let intersect = create_pipeline(maybe_embed_file!("shaders/intersect.comp"))?;
+    let compute_vertex = create_pipeline(maybe_embed_file!("shaders/compute_vertex.comp"))?;
+    let emit_triangles = create_pipeline(maybe_embed_file!("shaders/emit_triangles.comp"))?;
 
     let depth_image = create_image(
         vk::Format::D32_SFLOAT,
@@ -564,8 +569,8 @@ unsafe fn make_graph(
         "indices",
     );
 
-    let vert_module = modules.retrieve("shaders/mesh.vert", device)?;
-    let frag_module = modules.retrieve("shaders/mesh.frag", device)?;
+    let vert_module = modules.retrieve(maybe_embed_file!("shaders/mesh.vert"), device)?;
+    let frag_module = modules.retrieve(maybe_embed_file!("shaders/mesh.frag"), device)?;
 
     let pipeline = cache
         .borrow_mut()

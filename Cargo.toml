@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 resolver = "2"
 
+[features]
+embed = []
+
 [patch.'https://github.com/mihavlic/vulkan-bindings']
 pumice = { path = "./pumice" }
 
