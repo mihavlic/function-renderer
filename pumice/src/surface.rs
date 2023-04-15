@@ -75,6 +75,9 @@ pub unsafe fn create_surface(
                 )
             )
         }
+        // this is needed because XlibWindowHandle::window is c_ulong which is supposed to be u64
+        // but it is u32 on windows
+        #[cfg(not(target_os = "windows"))]
         (Rwh::Xlib(handle), Rdh::Xlib(display)) => {
             use crate::extensions::khr_xlib_surface::XlibSurfaceCreateInfoKHR;
 
@@ -93,6 +96,10 @@ pub unsafe fn create_surface(
                     surface
                 )
             )
+        }
+        #[cfg(target_os = "windows")]
+        (Rwh::Xlib(_), Rdh::Xlib(_)) => {
+            panic!("An Xlib window is not possible on Windows? This match case is disabled because the ffi::c_ulong in XlibWindowHandle::window is not u64 on windows");
         }
         (Rwh::Xcb(handle), Rdh::Xcb(display)) => {
             use crate::extensions::khr_xcb_surface::XcbSurfaceCreateInfoKHR;
