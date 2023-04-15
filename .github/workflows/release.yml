@@ -1,0 +1,70 @@
+# modified release workflow from https://github.com/BurntSushi/ripgrep/blob/master/.github/workflows/release.yml
+name: release
+on:
+  push:
+    # Enable when testing release infrastructure on a branch.
+    # branches:
+    # - ag/work
+    tags:
+    - "[0-9]+.[0-9]+.[0-9]+"
+defaults:
+  run:
+    shell: bash
+permissions:
+  contents: write
+jobs:
+  build-release:
+    name: build-release
+    runs-on: ubuntu-latest
+    env:
+      LINUX_TARGET: x86_64-unknown-linux-gnu
+      WINDOWS_TARGET: x86_64-pc-windows-gnu
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: apt install
+      run: |
+        sudo apt update
+        sudo apt install -y g++-mingw-w64-x86-64-posix cmake
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+        target: ${{ env.LINUX_TARGET }}, ${{ env.WINDOWS_TARGET }}
+
+    - name: Build release binary (linux)
+      run: |
+        RUSTFLAGS="-C panic=abort" cargo build --release --target $LINUX_TARGET
+        strip target/$LINUX_TARGET/release/function-renderer
+
+    - name: Build release binary (windows)
+      run: |
+        RUSTFLAGS="-C panic=abort" cargo build --release --target $WINDOWS_TARGET
+
+    - name: Build archives
+      run: |
+        # https://github.com/orgs/community/discussions/26686
+        RELEASE_VERSION=$GITHUB_REF_NAME
+
+        linux_staging="function-renderer-$RELEASE_VERSION-$LINUX_TARGET"
+        windows_staging="function-renderer-$RELEASE_VERSION-$WINDOWS_TARGET"
+
+        mkdir $linux_staging $windows_staging
+        cp target/$LINUX_TARGET/release/function-renderer $linux_staging/
+        cp target/$WINDOWS_TARGET/release/function-renderer.exe $windows_staging/
+
+        zip -r "$windows_staging.zip" "$windows_staging"
+        echo "WINDOWS_ASSET=$windows_staging.zip" >> $GITHUB_ENV
+
+        tar czf "$linux_staging.tar.gz" "$linux_staging"
+        echo "LINUX_ASSET=$linux_staging.tar.gz" >> $GITHUB_ENV
+
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ${{ env.LINUX_ASSET }}
+          ${{ env.WINDOWS_ASSET }}
+          

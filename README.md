@@ -3,10 +3,10 @@ This is an implementation of the dual contouring algorithm in Vulkan compute sha
 ![Screenshot of application](screenshot.png)
 
 # Building
-You need somewhat recent graphics drivers, vulkan headers, Rust, and a C++ compiler
+You need somewhat recent graphics drivers, shaderc, Rust, and a C++ compiler
 ## Archlinux
 ```sh
-sudo pacman -S vulkan-headers rust gcc
+sudo pacman -S shaderc rust gcc
 git clone https://github.com/mihavlic/function-renderer.git
 cd function-renderer
 cargo run
