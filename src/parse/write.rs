@@ -103,6 +103,7 @@ pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, St
     Ok((function, gradient))
 }
 
+/// A wrapper around [`shaderc::Compiler`] which handles our specific configuration and preprocessor include callback.
 pub struct GlslCompiler {
     compiler: shaderc::Compiler,
     options: shaderc::CompileOptions<'static>,
@@ -149,6 +150,10 @@ impl GlslCompiler {
         let spirv = self.compile(&source, path.file_name().unwrap().to_str().unwrap())?;
         Ok(spirv)
     }
+    /// Compile glsl source code to spirv.
+    ///
+    /// * `source` - The glsl source code.
+    /// * `file_name` - A file name for shader kind detection and error identification, doesn't have to be a valid path.
     pub fn compile(&self, source: &str, file_name: &str) -> shaderc::Result<Vec<u32>> {
         let kind = match file_name.rsplit('.').next().unwrap() {
             "comp" => ShaderKind::Compute,
@@ -161,6 +166,7 @@ impl GlslCompiler {
             .compile_into_spirv(source, kind, file_name, "main", Some(&self.options))
             .map(|artifact| artifact.as_binary().to_vec())
     }
+    /// Set a preprocessor define in the compiler.
     pub fn set_define(&mut self, name: &str, value: Option<&str>) {
         self.options.add_macro_definition(name, value);
     }

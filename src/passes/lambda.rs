@@ -4,6 +4,7 @@ use graph::{
     passes::{CreatePass, RenderPass},
 };
 
+/// A render pass which takes a `prepare` and a `create` lambda
 pub struct LambdaPass<
     C: FnMut(&mut GraphPassBuilder) + Send + 'static,
     F: FnMut(&GraphExecutor, &Device) + Send + 'static,

@@ -1,7 +1,8 @@
 #![allow(unused)]
 
-/// character definitions for our bundled icon font
-/// generated with <https://fontello.com/>
+//! Character definitions for our bundled icon font.
+//!
+//! Generated with <https://fontello.com/>
 
 pub fn egui_icon_font_family() -> egui::FontFamily {
     egui::FontFamily::Name("icons".into())

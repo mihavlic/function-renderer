@@ -1,3 +1,7 @@
+//! Watches and reloads shaders.
+//!
+//! This module implements all of the shader reloading logic. A [`notify::Watcher`] is used to watch files on disk and invalidates all that changes.
+//! Additionally, this also receives commands from the gui abount changes to the function, processes it, and templates into the shaders.
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -19,9 +23,13 @@ use graph::object;
 use notify::Watcher;
 use rustyline::Editor;
 
+/// The stored shader module
 pub struct ModuleEntry {
+    /// The actual vulkan object
     pub module: object::ShaderModule,
+    /// Spirv bytecode from the compiled shader, it is needed for descriptor reflection
     pub spirv: Vec<u32>,
+    /// A generation which is incremented every time the module is reloaded, this is useful for [`crate::recomputation`] functions
     pub generation: u32,
 }
 
@@ -31,31 +39,45 @@ impl Hash for ModuleEntry {
     }
 }
 
+/// A [`ModuleEntry`] with some metadata
 struct MetaModuleEntry {
     needs_density_fn: bool,
     module: Rc<ModuleEntry>,
     dirty: bool,
 }
 
+/// Like a [`ModuleEntry`] but doesn't result in a vulkan module.
+///
+/// It is still watched on disk and has a generation. The use case for this is shader includes, it can then be used with [crate::recomputation] to invalidate other modules (I admit it's hacky).
 struct SimpleFileEntry {
     generation: u32,
     dirty: bool,
 }
 
+/// The overall result of processing all the changed files and [`AsyncEvent`]s.
 #[derive(PartialEq, Eq, Debug)]
 pub enum PollResult {
+    /// Some modules changed, the vulkan Pipelines must be recreated.
     Recreate,
+    /// Nothing changed, continue rendering.
     Ok,
+    /// An application exit was requested.
     Exit,
 }
 
+/// A collection of strings derived from the submitted implicit function.
 struct DensityFunctionData {
+    /// The original implicit function.
     original: String,
+    /// A glsl function which evaluates the function value.
     function: String,
+    /// A glsl function which evaluates the function value and gradient with automatic reverse differentiation.
     gradient: String,
 }
 
+/// The central object which manages shader modules.
 pub struct ShaderModules {
+    /// Whether to force the edges of the function volume positive to make the resulting shape always solid.
     thickness: bool,
     density_function: Option<DensityFunctionData>,
     modules: HashMap<PathBuf, MetaModuleEntry>,
@@ -67,12 +89,18 @@ pub struct ShaderModules {
     compiler: GlslCompiler,
 }
 
+/// The string which lets us know that the shader wants the density function, it is replaced with [`DensityFunctionData::function`]
 const DENSITY_FUNCTION_MAGIC: &str = "float density(vec4 d, vec3 n);";
+/// The string which lets us know that the shader wants the gradient and density function, it is replaced with [`DensityFunctionData::gradient`]
 const GRADIENT_FUNCTION_MAGIC: &str = "vec4 gradient_density(vec4 d, vec3 n);";
 
+/// The initial config of [`ShaderModules`]
 pub enum ShaderModulesConfig<'a> {
+    /// Only display a static function, it may be changed later by a AsyncEvent::NewFunction
     Static(&'a str),
+    /// Start a new thread which read stdin and provides [rustyline] interface
     WatchStdin,
+    /// Do nothing
     None,
 }
 
@@ -211,10 +239,11 @@ impl ShaderModules {
             m.dirty = true;
         }
     }
-    pub fn invalidate_file(&mut self, path: &(impl AsRef<Path> + ?Sized)) {
+    pub fn invalidate_file(&mut self, path: impl AsRef<Path>) {
         let path = path.as_ref().canonicalize().unwrap();
         self.invalidate_file_impl(&path);
     }
+    /// Process all new [`AsyncEvent`]s
     pub fn poll(&mut self) -> PollResult {
         let mut new_density_function = None;
         let mut files = Vec::new();
@@ -260,6 +289,7 @@ impl ShaderModules {
 
         status
     }
+    /// Retrieve the generation of a SimpleFileEntry
     pub fn retrieve_simple(&mut self, path: impl AsRef<Path>) -> u32 {
         let path = path.as_ref().canonicalize().unwrap();
         match self.simple_files.entry(path.clone()) {
@@ -286,6 +316,7 @@ impl ShaderModules {
             }
         }
     }
+    /// Retrieve or possibly recompiled a shader module
     pub unsafe fn retrieve(
         &mut self,
         file: MaybeFile,

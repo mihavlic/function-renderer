@@ -1,3 +1,5 @@
+//! A YawPitch camera driver.
+
 use std::{f32::consts::FRAC_PI_2, marker::PhantomData};
 
 use glam::{EulerRot, Quat};
@@ -6,6 +8,7 @@ use dolly::{
     driver::RigDriver, handedness::Handedness, rig::RigUpdateParams, transform::Transform,
 };
 
+/// A reimplementation of [`dolly::drivers::YawPitch`] with a right handed coordinate system
 #[derive(Debug)]
 pub struct YawPitchZUp {
     /// [0..720)

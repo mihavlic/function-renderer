@@ -1,8 +1,12 @@
-use super::util::EguiDescriptorSetAllocator;
+//! The renderpass which draw the egui triangle list.
 use egui::{Color32, TextureId, TexturesDelta};
 use graph::{
-    device::{batch::GenerationId, staging::ImageRegion, submission::QueueSubmission, Device},
-    object::{self},
+    device::{
+        batch::GenerationId, maybe_attach_debug_label, staging::ImageRegion,
+        submission::QueueSubmission, Device, LazyDisplay,
+    },
+    graph::descriptors::DescriptorSetAllocator,
+    object::{self, ObjRef},
     smallvec::{smallvec, SmallVec},
     storage::DefaultAhashRandomstate,
     util::ffi_ptr::AsFFiPtr,
@@ -22,19 +26,23 @@ const VERTEX_BUFFER_BYTES: u64 =
     (VERTEX_BUFFER_COUNT * std::mem::size_of::<egui::epaint::Vertex>()) as u64;
 const INDEX_BUFFER_BYTES: u64 = (INDEX_BUFFER_COUNT * 4) as u64;
 
+/// Vulkan push constants.
 #[repr(C)]
 pub struct PushConstants {
     screen_size: [f32; 2],
 }
 
+/// An entry which an image registered with the gui.
 pub struct TextureImage {
     pub image: object::Image,
+    /// The color channel swizzle.
     pub components: vk::ComponentMapping,
     pub set: vk::DescriptorSet,
     pub view: vk::ImageView,
     pub options: egui::TextureOptions,
 }
 
+/// The persistent state of the rendeerer.
 pub struct Renderer {
     resolve_attachment: bool,
 
@@ -48,8 +56,6 @@ pub struct Renderer {
     vertex_buffer: (object::Buffer, *mut egui::epaint::Vertex),
     index_buffer: (object::Buffer, *mut u32),
 
-    // sender: mpsc::Sender<RendererEvent>,
-    // receiver: mpsc::Receiver<RendererEvent>,
     pending_retired_sets: Vec<vk::DescriptorSet>,
     pending_retired_textures: Vec<egui::TextureId>,
 
@@ -71,6 +77,7 @@ pub struct RendererConfig {
     pub color_src_access: vk::AccessFlags,
     pub color_final_layout: vk::ImageLayout,
 
+    /// Whether to do a resolve operation, if this is false all resolve_* arguments are ignored.
     pub resolve_enable: bool,
 
     pub resolve_load_op: vk::AttachmentLoadOp,
@@ -83,8 +90,11 @@ pub struct RendererConfig {
 }
 
 pub struct PaintConfig<'a> {
+    /// The command buffer into which the paint will be recorded.
     pub command_buffer: vk::CommandBuffer,
+    /// The queue family into which the paint will be recorded.
     pub queue_family: u32,
+    /// The submission into which the paint will be recorded.
     pub submission: QueueSubmission,
 
     pub color_view: vk::ImageView,
@@ -100,7 +110,9 @@ pub struct PaintConfig<'a> {
     pub clear: Option<vk::ClearColorValue>,
     pub pixels_per_point: f32,
 
+    /// Primitives to draw.
     pub primitives: &'a [egui::ClippedPrimitive],
+    /// Texture updates before draw.
     pub textures_delta: &'a TexturesDelta,
     pub size: [u32; 2],
 }
@@ -388,6 +400,7 @@ impl Renderer {
         }
     }
 
+    /// Allocate an internal buffer.
     unsafe fn create_buffer<T>(
         size: u64,
         usage: vk::BufferUsageFlags,
@@ -426,6 +439,7 @@ impl Renderer {
         (buffer, info.mapped_data.cast())
     }
 
+    /// Get or create a sampler according to [`egui::TextureOptions`]
     unsafe fn get_sampler(
         samplers: &mut HashMap<egui::TextureOptions, object::Sampler, DefaultAhashRandomstate>,
         options: egui::TextureOptions,
@@ -453,6 +467,7 @@ impl Renderer {
             .get_handle()
     }
 
+    /// Update the registered textures with a [`TexturesDelta`]
     #[must_use]
     unsafe fn update_textures(
         &mut self,
@@ -653,7 +668,7 @@ impl Renderer {
             return SmallVec::new();
         }
 
-        let submissions = device.write_multiple(|staging| {
+        let submissions = device.access_multiple(|staging| {
             let mut submissions = SmallVec::new();
             for (image, is_rgba, blits) in output_blits {
                 let image = self.texture_images.get(&image).unwrap();
@@ -1008,10 +1023,12 @@ impl Renderer {
         wait_submission
     }
 
+    /// Get registered texture.
     pub fn get_texture(&self, id: egui::TextureId) -> Option<&TextureImage> {
         self.texture_images.get(&id)
     }
 
+    /// Register a user texture, may be called multiple times for the same id, potentially recreating it.
     pub unsafe fn add_texture(
         &mut self,
         id: egui::TextureId,
@@ -1073,5 +1090,61 @@ impl Renderer {
                 v.insert(value);
             }
         }
+    }
+}
+
+const DESCRIPTOR_SET_SIZES: &[vk::DescriptorPoolSize] = graph::desc_set_sizes!(64 * SAMPLED_IMAGE);
+
+/// A vulkan descriptor set allocator which recycles unused ones.
+pub(crate) struct EguiDescriptorSetAllocator {
+    allocator: DescriptorSetAllocator,
+    free_sets: Vec<vk::DescriptorSet>,
+}
+
+impl EguiDescriptorSetAllocator {
+    pub(crate) fn new() -> Self {
+        Self {
+            allocator: DescriptorSetAllocator::new(DESCRIPTOR_SET_SIZES),
+            free_sets: Vec::new(),
+        }
+    }
+    /// Allocate a new descriptor set, either uses a recycled one or creates a new one.
+    pub(crate) unsafe fn allocate(
+        &mut self,
+        image_view: vk::ImageView,
+        sampler: vk::Sampler,
+        layout: &ObjRef<object::DescriptorSetLayout>,
+        device: &Device,
+    ) -> vk::DescriptorSet {
+        let set = self
+            .free_sets
+            .pop()
+            .unwrap_or_else(|| self.allocator.allocate_set(layout, device));
+
+        let label = LazyDisplay(|f| write!(f, "Egui descriptor {:p}", set));
+        maybe_attach_debug_label(set, &label, device);
+
+        let image_info = vk::DescriptorImageInfo {
+            sampler,
+            image_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        };
+
+        let write = vk::WriteDescriptorSet {
+            dst_set: set,
+            dst_binding: 0,
+            dst_array_element: 0,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            p_image_info: &image_info,
+            ..Default::default()
+        };
+
+        device.device().update_descriptor_sets(&[write], &[]);
+
+        set
+    }
+    pub fn free_set(&mut self, set: vk::DescriptorSet) {
+        self.free_sets.push(set);
     }
 }

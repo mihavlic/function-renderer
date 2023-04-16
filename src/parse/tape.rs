@@ -1,3 +1,8 @@
+//! Converts the function AST into a sequence of operations and then glsl code.
+//!
+//! This module borrows the ideas from fidget <https://github.com/mkeeter/fidget/blob/169e18e75194e064515da883bb303bbe2031afdc/fidget/src/core/ssa/tape.rs>.
+//! The tape is constructed by teaversing the ast depth-first and then pushing operation to the tape when returning from nodes. This ensures a topologicel order.
+//! The operations are represented in ssa form, where we can deduplicate same expressions and delete unused ones. Known constant value is tracked to enable constant folding.
 use std::{f32::consts::FRAC_PI_2, fmt::Display, hash::Hash};
 
 use graph::{device::LazyDisplay, storage::DefaultAhashMap};
@@ -69,6 +74,7 @@ pub enum SsaExpression {
     Builtin(BuiltingVariable),
 }
 
+/// A linear sequence of operations which evaluated the density function.
 #[derive(Default)]
 pub struct Tape {
     tape: Vec<(SsaExpression, bool)>,
@@ -79,12 +85,14 @@ impl Tape {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Get the constant value, if it is known.
     fn get_constant_value(&self, index: SsaIndex) -> Option<f32> {
         match &self.tape[index.0 as usize].0 {
             SsaExpression::Constant(v) => Some(v.0),
             _ => None,
         }
     }
+    /// Mark and SsaIndex as used, meaning that it will get emitted into glsl.
     pub fn mark_used(&mut self, index: SsaIndex) {
         self.tape[index.0 as usize].1 = true;
     }
@@ -93,6 +101,7 @@ impl Tape {
         self.mark_used(index);
         index
     }
+    /// Appends an expression to the Tape
     fn process_ast_impl(&mut self, exppression: &super::Expression) -> SsaIndex {
         let ssa = match exppression {
             super::Expression::Ternary { op, a, b, c } => {
@@ -211,6 +220,9 @@ impl Tape {
         };
         self.add_internal(ssa)
     }
+    /// Adds the expression to the tape or returns the index of a one if they are the same.
+    ///
+    /// The internal version adds expressions which are initially marked as unused
     fn add_internal(&mut self, expression: SsaExpression) -> SsaIndex {
         let Self { tape, expressions } = self;
 
@@ -222,6 +234,7 @@ impl Tape {
                 index
             })
     }
+    /// Adds the expression to the tape or returns the index of a one if they are the same.
     pub fn add(&mut self, expression: SsaExpression) -> SsaIndex {
         let Self { tape, expressions } = self;
 
@@ -229,15 +242,22 @@ impl Tape {
             .entry(expression.clone())
             .or_insert_with(move || {
                 let index = SsaIndex::from_usize(tape.len());
+                // external expressions are conservatively always marked as used
                 tape.push((expression, true));
                 index
             })
     }
+    /// Formats the tape as glsl code. Note that it is just a sequence of statements and doesn't include a function body.
+    ///
+    /// If `differentiate` is true, the code includes a automatic reverse differentiation to calculate the function gradient.
     pub fn write_glsl(&self, differentiate: bool) -> String {
         let mut out = String::new();
         self.write_glsl_into(&mut out, differentiate);
         out
     }
+    /// Formats the tape as glsl code into a string. Note that it is just a sequence of statements and doesn't include a function body.
+    ///
+    /// If `differentiate` is true, the code includes a automatic reverse differentiation to calculate the function gradient.
     pub fn write_glsl_into(&self, out: &mut String, differentiate: bool) {
         for (i, (s, used)) in self.tape.iter().enumerate() {
             if *used == false {

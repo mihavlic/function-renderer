@@ -1,3 +1,5 @@
+//! An stl file writer.
+
 /// Writes an indexed triangle list mesh to an stl,
 /// header and attribute fields are zero
 /// see <https://en.wikipedia.org/wiki/STL_(file_format)#Binary_STL>
@@ -41,6 +43,7 @@ pub fn write_stl(
     Ok(())
 }
 
+/// Write the bytes of some type to the writer, does not consider the type's alignment and probably includes padding bytes?
 #[inline(always)]
 fn write_element<T>(mut writer: impl std::io::Write, element: T) -> std::io::Result<()> {
     let ptr = &element as *const T as *const u8;

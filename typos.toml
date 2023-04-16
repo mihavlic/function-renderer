@@ -1,0 +1,6 @@
+# configuration for a typo checker
+[default.extend-words]
+dout = "dout"
+
+[files]
+extend-exclude = ["pumice"]

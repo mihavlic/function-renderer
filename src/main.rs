@@ -1,5 +1,6 @@
 #![allow(unreachable_code, dead_code)]
 
+pub mod embed;
 pub mod gui;
 pub mod hotreaload;
 pub mod parse;
@@ -7,7 +8,6 @@ pub mod passes;
 pub mod recomputation;
 pub mod stl;
 pub mod yawpitch;
-pub mod embed;
 
 use dolly::prelude::{Arm, Position, RightHanded, Smooth};
 use dolly::rig::CameraRig;
@@ -42,11 +42,13 @@ use winit::event_loop::EventLoop;
 use winit::window::WindowBuilder;
 use yawpitch::YawPitchZUp;
 
-use crate::embed::{MaybeFile, maybe_embed_file};
+use crate::embed::{maybe_embed_file, MaybeFile};
 use crate::gui::{PaintConfig, RendererConfig};
 use crate::passes::{LambdaPass, MeshPass};
 
+/// Internal configuration option for the msaa sample count for the function mesh pass.
 pub const MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C1;
+/// Internal configuration option for the msaa sample count for egui render pass.
 pub const EGUI_MSAA_SAMPLE_COUNT: vk::SampleCountFlags = vk::SampleCountFlags::C4;
 
 enum ApplicationEvent {
@@ -54,13 +56,21 @@ enum ApplicationEvent {
     MeshIndicesReady(Vec<u32>),
 }
 
+/// The application state which is updated by [`main()`] and is read by some of the graph render passes.
 pub struct ApplicationState {
+    /// The current camera tranform of the *camera*. The model to world transform is the inverse of this.
     camera: Transform<RightHanded>,
+    /// Egui primitives
     primitives: Vec<egui::ClippedPrimitive>,
+    /// Egui requested texture modifications
     textures_delta: egui::TexturesDelta,
+    /// Physical pixels (physical display elements) / logical pixels (hardware independent size, like css pixels), essentially dpi scaling - "normal" (96 dpi) is 1.0 in `pixels_per_point`
     pixels_per_point: f32,
+    /// The min corner of the rendered function interval
     rect_min: Vec3,
+    /// The max corner of the rendered function interval
     rect_max: Vec3,
+    /// The time since the start of the application
     time: f32,
 }
 
@@ -78,11 +88,15 @@ impl Default for ApplicationState {
     }
 }
 
-fn main() {
+/// The function which ties it all together. There really is a lot of code in here which should probably be separated.
+pub fn main() {
     unsafe {
+        // start the logging runtime, currently it really just redirects to stdout
         install_tracing_subscriber(None);
+        // the winit event loop
         let event_loop = EventLoop::new();
 
+        // create the window
         let window = WindowBuilder::new()
             .with_inner_size(winit::dpi::LogicalSize::new(512.0f32, 512.0f32))
             .with_decorations(false)
@@ -90,10 +104,12 @@ fn main() {
             .build(&event_loop)
             .unwrap();
 
+        // create the vulkan window object and its application state
         let (surface, device, queue) = make_device(&window);
         let swapchain = make_swapchain(&window, surface, &device);
         let window_state = WindowState::new(window, &event_loop);
 
+        // this object tracks and reloads shader modules
         let modules = ShaderModules::new(
             // ShaderModulesConfig::WatchStdin,
             // ShaderModulesConfig::Static("sin(2 sqrt(x*x+y*y) / pi) * 25 + 30 - z"),
@@ -101,12 +117,19 @@ fn main() {
             ShaderModulesConfig::None,
             true,
             &[
-                ("compute_descriptors.glsl", maybe_embed_file!("shaders/compute_descriptors.glsl"))
-            ]
+                // register files which will be included by other shaders
+                (
+                    "compute_descriptors.glsl",
+                    maybe_embed_file!("shaders/compute_descriptors.glsl"),
+                ),
+            ],
         );
+        // this caches some function evaluations and improves screen resize speed in particular
         let cache = RecomputationCache::new();
+        // compiler for rendergraphs - schedules and synchronizes gpu work
         let mut compiler = GraphCompiler::new();
 
+        // the virtual camera which rotates around a single point, always loking at the center
         let mut camera: CameraRig = CameraRig::builder()
             .with(Position::new(Vec3::splat(31.5)))
             .with(YawPitchZUp::new().pitch_degrees(35.0).yaw_degrees(0.0))
@@ -122,9 +145,11 @@ fn main() {
         let mut prev = std::time::Instant::now();
         let mut graph: Option<GraphOutput> = None;
 
+        // the title bar gui state
         let mut gui = GuiControl::new(
             modules.event_sender(),
             app_data.clone(),
+            // prefill with some initial history
             &[
                 "sin(2sqrt(x^2+y^2+z^2)/pi)",
                 "2000/(x y) - z + 15",
@@ -138,11 +163,13 @@ fn main() {
             ],
         );
 
+        // wrap the objects in options to allow us to control drop order from the event loop
         let mut device_option = Some(device);
         let mut swapchain_option = Some(swapchain);
         let mut modules_option = Some(modules);
         let mut cache_option = Some(cache);
 
+        // the current size of the viewport where the function is rendered
         let mut inner_size = None;
 
         event_loop.run(move |event, _, control_flow| {
@@ -151,37 +178,48 @@ fn main() {
             let modules = modules_option.as_mut().unwrap();
             let cache = cache_option.as_mut().unwrap();
 
+            // feed the event to the window state
             window_state.process_event(event);
             let window = window_state.window();
 
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    ApplicationEvent::MeshVerticesReady(a) => mesh_data.0 = Some(a),
-                    ApplicationEvent::MeshIndicesReady(a) => mesh_data.1 = Some(a),
+            // handle the mesh export - since reading gpu memory is inherently asynchronous, the current abtractions
+            // are given a callback to call when the memory is ready, this callback copies the memory and sends it here
+            // since the mesh is composed of both a vertex and an index buffer, we need to wait for both to complete
+            // only then can we continue saving the mesh to disk
+            {
+                // receive the mesh buffers
+                while let Ok(event) = rx.try_recv() {
+                    match event {
+                        ApplicationEvent::MeshVerticesReady(a) => mesh_data.0 = Some(a),
+                        ApplicationEvent::MeshIndicesReady(a) => mesh_data.1 = Some(a),
+                    }
+                }
+
+                // if we've collected both of them, remove them from the variable and open the file dialog
+                if mesh_data.0.is_some() && mesh_data.1.is_some() {
+                    let (Some(vertices), Some(indices)) = std::mem::take(&mut mesh_data) else {
+                        unreachable!();
+                    };
+
+                    // the dialog is opened on another thread to keep the main thread running
+                    device.threadpool().spawn(move || {
+                        if let Some(path) = rfd::FileDialog::new().add_filter("stl", &["stl"]).save_file() {
+                            if let Ok(file) = OpenOptions::new().read(false).write(true).truncate(true).create(true).open(&path) {
+                                let writer = BufWriter::new(file);
+                                if let Err(e) = write_stl(writer, &vertices, &indices) {
+                                    eprintln!("Error saving mesh to '{path:?}': {e}");
+                                }
+                            } else {
+                                eprintln!("Failed to open {path:?}");
+                            }
+                        } else {
+                            eprintln!("FileDialog returned None");
+                        }
+                    });
                 }
             }
 
-            if mesh_data.0.is_some() && mesh_data.1.is_some() {
-                let (Some(vertices), Some(indices)) = std::mem::take(&mut mesh_data) else {
-                    unreachable!();
-                };
-                
-                device.threadpool().spawn(move || {
-                    if let Some(path) = rfd::FileDialog::new().add_filter("stl", &["stl"]).save_file() {
-                        if let Ok(file) = OpenOptions::new().read(false).write(true).truncate(true).create(true).open(&path) {
-                            let writer = BufWriter::new(file);
-                            if let Err(e) = write_stl(writer, &vertices, &indices) {
-                                eprintln!("Error saving mesh to '{path:?}': {e}");
-                            }
-                        } else {
-                            eprintln!("Failed to open {path:?}");
-                        }
-                    } else {
-                        eprintln!("FileDialog returned None");
-                    }
-                });
-            }
-
+            // process all winit events collected do far
             for event in window_state.drain_events() {
                 match event {
                     Event::WindowEvent { event, window_id } => match event {
@@ -200,6 +238,7 @@ fn main() {
                                 MouseScrollDelta::LineDelta(_, y) => y,
                                 MouseScrollDelta::PixelDelta(p) => p.y as f32,
                             };
+                            // zoom the camera
                             camera.driver_mut::<Arm>().offset.z -= delta * 2.0;
                         }
                         _ => {}
@@ -207,6 +246,7 @@ fn main() {
                     Event::MainEventsCleared => {
                         window.request_redraw();
                     }
+                    // start rendering!
                     Event::RedrawRequested(_) => {
                         let dt = prev.elapsed().as_secs_f32();
                         camera.update(dt);
@@ -248,13 +288,15 @@ fn main() {
 
                                 if window_state.mouse_state().left {
                                     let m = 0.3;
+                                    // rotate the camera
                                     camera
                                         .driver_mut::<YawPitchZUp>()
                                         .rotate_yaw_pitch(drag_delta.x * m, drag_delta.y * m);
                                 }
 
+                                // see the comment about saving the mesh at the start of the event loop
                                 if save_requested {
-                                    device.write_multiple(|manager| {
+                                    device.access_multiple(|manager| {
                                         let mut read = |buf: &object::Buffer, kind: fn(*const u8, usize) -> ApplicationEvent| {
                                             let size = buf.get_create_info().size as usize;
                                             let tx = tx.clone();
@@ -287,6 +329,7 @@ fn main() {
                                     });
                                 }
 
+                                // update the app state
                                 {
                                     let mut lock = app_data.lock().unwrap();
                                     lock.camera = camera.final_transform;
@@ -310,6 +353,7 @@ fn main() {
                                     }
                                 }
 
+                                // sleep the remainder of 16 miliseconds to achieve 60 Hz
                                 if let Some(remaining) =
                                     Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
                                 {
@@ -320,9 +364,11 @@ fn main() {
                             }
                         }
 
+                        // poll the vulkan abstraction to perform some cleanup
                         device.idle_cleanup_poll();
 
                         if rebuild_graph && !exit {
+                            // yees run the graph
                             let result = make_graph(
                                 &swapchain,
                                 inner_size.unwrap_or([512; 2]),
@@ -348,8 +394,15 @@ fn main() {
                             control_flow.set_exit();
                         }
                     }
+                    // winit guarantees that this is the last event we'll receive
+                    // now, we have all the code to perform a clean teardown
+                    // but for some reason the shaderc compiler takes way too long to clean up
+                    // and the swapchain semaphore takes like 300ms (??) to be destroyed 
+                    // 
+                    // this combined makes the application take too long to exit, the simple solution
+                    // is to end the process and leave the os to deal with it
                     Event::LoopDestroyed => {
-                        // the vulkan context teardown takes like 800 ms, this makes it go fast!
+                        // gotta go fast
                         std::process::exit(0);
 
                         drop(graph.take());
@@ -367,12 +420,16 @@ fn main() {
     }
 }
 
+/// Data from [`make_graph()`] needed by [`main()`]
 struct GraphOutput {
+    /// The vulkan buffer with vertices
     vertices: object::Buffer,
+    /// The vulkan buffer with indices
     indices: object::Buffer,
     graph: CompiledGraph,
 }
 
+/// Creates the render graph which executes all Vulkan work. It must be recreated when screen size changes or the viewport extent changes.
 unsafe fn make_graph(
     swapchain: &object::Swapchain,
     function_extent: [u32; 2],
@@ -383,6 +440,7 @@ unsafe fn make_graph(
     cache: &mut RecomputationCache,
     device: &device::OwnedDevice,
 ) -> Result<GraphOutput, Box<dyn Error>> {
+    /// Hash all of the provided expressions, used with [`crate::recomputation::RecomputationCache::compute_located()`]
     macro_rules! args {
         ($($arg:expr),*) => {
             |_state| {
@@ -480,7 +538,8 @@ unsafe fn make_graph(
                             label: Some(label.into()),
                         },
                         vma::AllocationCreateInfo {
-                            flags: vma::AllocationCreateFlags::HOST_ACCESS_ALLOW_TRANSFER_INSTEAD | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                            flags: vma::AllocationCreateFlags::HOST_ACCESS_ALLOW_TRANSFER_INSTEAD
+                                | vma::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                             usage: vma::MemoryUsage::AutoPreferDevice,
                             ..Default::default()
                         },
@@ -1212,6 +1271,7 @@ unsafe fn make_graph(
     })
 }
 
+/// Creates the vulkan context with the required extension and selects a device
 unsafe fn make_device(
     window: &winit::window::Window,
 ) -> (
@@ -1301,10 +1361,11 @@ unsafe fn make_device(
     (surface, device, queue)
 }
 
+/// Creates the vulkan swapchain which allows rendering to a window. The object returned wraps [`vk::SwapchainKHR`] and automatically recreates it.
 unsafe fn make_swapchain(
     window: &winit::window::Window,
     surface: object::Surface,
-    device: &device::OwnedDevice,
+    device: &device::Device,
 ) -> object::Swapchain {
     let extent = {
         let size = window.inner_size();

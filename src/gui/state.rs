@@ -1,3 +1,4 @@
+//! The state of the title bar gui.
 use crate::{
     gui::egui_icon_font_family,
     hotreaload::AsyncEvent,
@@ -24,6 +25,7 @@ pub fn icon_text(icon: char, size: f32) -> egui::RichText {
     egui::RichText::new(icon).font(egui::FontId::new(size, egui_icon_font_family()))
 }
 
+/// State of the popup window which controls the viewed function interval.
 #[derive(Default)]
 struct CenterControl {
     density: bool,
@@ -32,6 +34,7 @@ struct CenterControl {
 }
 
 impl CenterControl {
+    /// Run the ui and potentially send some `AyncEven`s
     fn ui(&mut self, ui: &mut Ui, sender: &Sender<AsyncEvent>) {
         egui::Grid::new("center grid")
             .min_col_width(0.0)
@@ -70,12 +73,17 @@ impl CenterControl {
     }
 }
 
+/// The output of running the Gui.
 pub struct GuiOuput {
+    /// Size of the function viewport where the function will be rendered.
     pub inner_size: [u32; 2],
+    /// Drag delta inside the viewport.
     pub drag_delta: egui::Vec2,
+    /// The save button has been pressed.
     pub save_requested: bool,
 }
 
+/// The central state of the whole title bar.
 pub struct GuiControl {
     prev_finished_edit_hash: Option<u64>,
     edit: String,
@@ -90,6 +98,9 @@ pub struct GuiControl {
 }
 
 impl GuiControl {
+    /// * sender - an async channel to send AsyncEvent through
+    /// * state - an arc to the [`ApplicationState`] which will be updated after each call to [`Self::ui()`]
+    /// * initial_history - the initial history of the density functions
     pub fn new(
         sender: Sender<AsyncEvent>,
         state: Arc<Mutex<ApplicationState>>,
@@ -125,6 +136,7 @@ impl GuiControl {
             open_settings: false,
         }
     }
+    /// Run the ui and update the [`ApplicationState`].
     pub fn ui(&mut self, window: &WindowState) -> GuiOuput {
         let mut new_index = None;
         let mut size = None;
@@ -261,6 +273,8 @@ impl GuiControl {
         }
         .multiply_with_opacity(openness);
 
+        // for some reason the window refuses to use the transparency in the provided frame (multiply_with_opacity)
+        // so we'll just hide it when it's almost closed
         if openness > 0.01 {
             egui::Window::new("")
                 .id(egui::Id::new("settings"))

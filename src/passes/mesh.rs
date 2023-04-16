@@ -17,6 +17,7 @@ use graph::{
 use pumice::{util::ObjectHandle, vk};
 use std::sync::{Arc, Mutex};
 
+/// The render pass which draws the function mesh
 pub struct MeshPass {
     pub pipeline: GraphicsPipeline,
     pub attachments: Vec<GraphImage>,

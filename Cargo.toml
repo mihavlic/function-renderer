@@ -5,30 +5,45 @@ edition = "2021"
 resolver = "2"
 
 [features]
+# embed the shaders into the binary to make it portable
 embed = []
 
 [patch.'https://github.com/mihavlic/vulkan-bindings']
 pumice = { path = "./pumice" }
 
+# I'm not really happy about it but winit + egui + rfd pull in an incredible amount of dependencies (and from-source build of shaderc also takes way too long)
 [dependencies]
+# various parts of the vulkan wrapper
 pumice = {git = "https://github.com/mihavlic/vulkan-bindings.git", features = ["wrappers"]}
 pumice-vma = {git = "https://github.com/mihavlic/pumice-vma.git", features = ["VK_VERSION_1_1"]}
 graph = {git = "https://github.com/mihavlic/vulkan-engine.git"}
 
+# window and gui
 winit = {version = "0.28.1", default-features = false, features = ["x11", "wayland"]}
 egui = "0.21.0"
 egui-winit = "0.21.1"
-slice-group-by = "0.3.0"
 image = "0.24.4"
 
+# utility algorithm for slicing vectors of values according to some shared key 
+slice-group-by = "0.3.0"
+
+# file mofification notification library
 notify = "5.1.0"
+# pretty commandline line "editor"
 rustyline = "10.0.0"
+# math library
 glam = "0.23.0"
+# smoothed! camera library
 dolly = "0.4.1"
+# fast hashing algorithm
 ahash = "0.8.3"
+# google glsl to spirv compiler
 shaderc = "0.8.2"
+# native file dialog
 rfd = {version = "0.11.3", default-features = false, features = ["xdg-portal"] }
 
+# doing this ironically makes compile times faster since there's less data to link into the executable
+# combined with turning off debug info achieves < 2 s compilations
 [profile.dev.package."egui"]
 opt-level = 2
 [profile.dev.package."egui-winit"]

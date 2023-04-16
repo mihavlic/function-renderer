@@ -1,3 +1,11 @@
+//! The parser for mathematical expressions.
+//!
+//! This implements a recursive descent parser which parses the expression of the submitted density function.
+//! There are Unary, Binary, and Ternary operations, they may be represented by function calls or operators.
+//! Each operation has the following function:
+//! * `eval` -  This is used for constant folding suring tape construction.
+//! * `try_from_str` -  Tries to create the operation from an identifier.
+//! * `name` -  Return a human readable name of the operation, this is used for debugging.
 use std::{collections::VecDeque, fmt::Display};
 
 #[derive(Debug)]
@@ -40,7 +48,7 @@ impl TernaryOperation {
             }
         }
     }
-    fn try_function_str(str: &str) -> Option<Self> {
+    fn try_from_str(str: &str) -> Option<Self> {
         match str {
             "select" => Some(Self::Select),
             _ => None,
@@ -86,7 +94,7 @@ impl BinaryOperation {
             BinaryOperation::Max => a.min(b),
         }
     }
-    fn try_function_str(str: &str) -> Option<Self> {
+    fn try_from_str(str: &str) -> Option<Self> {
         match str {
             "min" => Some(Self::Min),
             "max" => Some(Self::Max),
@@ -165,7 +173,7 @@ impl UnaryOperation {
             UnaryOperation::ArcCotan => std::f32::consts::FRAC_2_PI - a.atan(),
         }
     }
-    fn try_function_str(str: &str) -> Option<Self> {
+    fn try_from_str(str: &str) -> Option<Self> {
         match str {
             "arccos" => Some(Self::ArcCos),
             "arccotan" => Some(Self::ArcCotan),
@@ -210,6 +218,7 @@ pub enum BuiltingVariable {
     Y,
     Z,
     T,
+    /// The normalized_* variants are used to clamp the density for function thickness, see [crate::parse::write]
     normalized_X,
     normalized_Y,
     normalized_Z,
@@ -246,6 +255,7 @@ impl Constant {
     }
 }
 
+/// The central AST type
 pub enum Expression {
     Ternary {
         op: TernaryOperation,
@@ -288,7 +298,11 @@ enum Token<'a> {
     End,
 }
 
-// "inspired" by https://github.com/gfx-rs/naga/blob/48e79388b506535d668df4f6c7be4e681812ab81/src/front/wgsl/lexer.rs#L8
+/// Lexes a token from the string.
+///
+/// Returns the token and the remaining string.
+///
+/// Heavily based on <https://github.com/gfx-rs/naga/blob/48e79388b506535d668df4f6c7be4e681812ab81/src/front/wgsl/lexer.rs#L8>
 fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
     let mut chars = str.chars();
     loop {
@@ -354,6 +368,7 @@ fn next_token(mut str: &str) -> Result<(Token<'_>, &str)> {
     }
 }
 
+/// Consume any characters for which the function is true, stopping once it returns false.
 fn consume_any(input: &str, what: impl Fn(char) -> bool) -> (&str, &str) {
     let pos = input.find(|c| !what(c)).unwrap_or(input.len());
     input.split_at(pos)
@@ -438,6 +453,7 @@ impl<'a> Parser<'a> {
     fn next(&mut self) -> Token {
         self.tokens.pop_front().unwrap_or(Token::End)
     }
+    /// Consumes the next token if it matches `tok` or returns an error.
     fn ensure_token(&mut self, tok: &Token) -> Result<()> {
         let d = std::mem::discriminant::<Token>(tok);
         let next = self.next();
@@ -451,6 +467,7 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Parses a monop including any right asociative operators such as `-a`, `1.0`, `(1 + 2)`
 fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
     let boxed_expr;
     let mut implicit_mul_eligible = false;
@@ -483,7 +500,7 @@ fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
                 }
             }
             Token::Ident(ident) => {
-                if let Some(op) = TernaryOperation::try_function_str(ident) {
+                if let Some(op) = TernaryOperation::try_from_str(ident) {
                     parser.ensure_token(&Token::LParen)?;
                     let a = parse_expr(parser, 8)?;
                     parser.ensure_token(&Token::Comma)?;
@@ -493,7 +510,7 @@ fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
                     parser.ensure_token(&Token::RParen)?;
 
                     Expression::Ternary { op, a, b, c }
-                } else if let Some(op) = BinaryOperation::try_function_str(ident) {
+                } else if let Some(op) = BinaryOperation::try_from_str(ident) {
                     parser.ensure_token(&Token::LParen)?;
                     let left = parse_expr(parser, 8)?;
                     parser.ensure_token(&Token::Comma)?;
@@ -501,7 +518,7 @@ fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
                     parser.ensure_token(&Token::RParen)?;
 
                     Expression::Binary { op, left, right }
-                } else if let Some(op) = UnaryOperation::try_function_str(ident) {
+                } else if let Some(op) = UnaryOperation::try_from_str(ident) {
                     let child;
                     // handle differently `sin( expr )` and `sin expr`
                     if let Token::LParen = parser.peek() {
@@ -543,6 +560,7 @@ fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
     }
 }
 
+/// Parses a full expression such as `1 + 1`. This fuction is recursive to implement operator precedence.
 fn parse_expr(parser: &mut Parser, precedence: u8) -> Result<Box<Expression>> {
     let mut left = parse_monoop(parser)?;
 
@@ -575,6 +593,7 @@ fn parse_expr(parser: &mut Parser, precedence: u8) -> Result<Box<Expression>> {
     return Ok(left);
 }
 
+/// Prints out a debug representation of the AST.
 pub fn debug_ast(node: &Expression) {
     match node {
         Expression::Number(number) => {
@@ -612,6 +631,7 @@ pub fn debug_ast(node: &Expression) {
     }
 }
 
+/// Utility function to create the AST of an expression.
 pub fn parse_math(expr: &str) -> Result<Box<Expression>> {
     let mut parser = Parser::new(expr)?;
     parse_expr(&mut parser, u8::MAX)

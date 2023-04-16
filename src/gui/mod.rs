@@ -1,8 +1,8 @@
+//! Everything regarding the gui.
 mod decorations;
 mod icons;
 mod renderer;
 mod state;
-mod util;
 
 use std::{
     cell::{Cell, RefCell, RefMut},
@@ -18,6 +18,7 @@ pub use {icons::*, renderer::*, state::*};
 
 pub type WinitEvent<'a> = winit::event::Event<'a, ()>;
 
+/// What mouse buttons are pressed
 #[derive(Default, Clone, Copy, PartialEq)]
 pub struct MouseState {
     pub left: bool,
@@ -36,6 +37,7 @@ impl MouseState {
     }
 }
 
+/// The output result of running the gui, see [crate::ApplicationState] which includes these fields.
 pub struct GuiFrameOutput<R> {
     pub exit_requested: bool,
     pub primitives: Vec<ClippedPrimitive>,
@@ -43,13 +45,19 @@ pub struct GuiFrameOutput<R> {
     pub inner: R,
 }
 
+/// The inner state for interior mutability.
 struct InnerWindowState {
+    /// All the winit events collected so far, these may be injected by the application.
     collected_events: Vec<WinitEvent<'static>>,
+    /// The id of the last device from which a mouse event came.
     last_mouse_device: Option<DeviceId>,
+    /// Which mouse buttons are pressed.
     mouse_buttons: MouseState,
+    /// Handles the integration between egui and winit.
     egui_winit: egui_winit::State,
 }
 
+/// The state of the winit window and egui.
 pub struct WindowState {
     window: winit::window::Window,
     should_exit: Cell<bool>,
@@ -117,6 +125,7 @@ impl WindowState {
         _ = self.window.drag_window();
         self.inject_pointer_release();
     }
+    /// Start an interactive resize, only works on X11 - [issue](https://github.com/rust-windowing/winit/issues/725#issuecomment-1379192997)
     pub fn start_window_drag_resize(&self, direction: ResizeDirection) {
         _ = self.window.drag_resize_window(direction);
         self.inject_pointer_release();
@@ -135,6 +144,7 @@ impl WindowState {
             },
         });
     }
+    /// Append a winit event to be handled later.
     pub fn process_event(&self, event: WinitEvent<'_>) {
         let mut inner = self.inner_mut();
         match &event {
@@ -167,6 +177,7 @@ impl WindowState {
             inner.collected_events.push(event);
         }
     }
+    /// Run the per-frame gui logic resulting in a triangle list.
     pub fn gui_frame<R, F: FnOnce(&WindowState) -> R>(&self, fun: F) -> GuiFrameOutput<R> {
         let mut inner = self.inner_mut();
 
@@ -196,6 +207,7 @@ impl WindowState {
     }
 }
 
+/// Set the custom icon font.
 fn set_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 

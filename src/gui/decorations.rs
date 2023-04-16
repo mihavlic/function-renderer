@@ -1,3 +1,8 @@
+//! The client side decorations (titlebar and shadow).
+//!
+//! Doing this loses us some functionality, particularly because resizing on anything but X11, this is blocked on this [winit issue](https://github.com/rust-windowing/winit/issues/725#issuecomment-1379192997).
+//! Also since the shadow is now part of our window, the window can't be dragged to the edges of the screen, this probably requires some platform specific apis to fix.
+//! But at least moving the window works.
 use egui::CursorIcon;
 use winit::window::ResizeDirection;
 
@@ -5,6 +10,8 @@ use crate::gui::{icon_button, icons};
 
 use super::WindowState;
 
+/// Emit the window frame commands into egui.
+/// Modified from this egui [example](https://github.com/emilk/egui/tree/c86bfb6e67abf208dccd7e006ccd9c3675edcc2f/examples/custom_window_frame).
 pub fn custom_window_frame(
     window: &WindowState,
     title: &str,
@@ -34,6 +41,7 @@ pub fn custom_window_frame(
             },
         },
     };
+    // Don't draw the shadow and margin if we're fullscreen.
     if window.window().is_maximized() {
         panel_frame.rounding = egui::Rounding::none();
         panel_frame.shadow = egui::epaint::Shadow::NONE;
@@ -77,6 +85,7 @@ pub fn custom_window_frame(
         });
 }
 
+/// Emit the window title bar commands into egui.
 fn title_bar_ui(
     ui: &mut egui::Ui,
     window: &WindowState,
@@ -162,6 +171,7 @@ fn handle_titlebar_interaction(ui: &mut egui::Ui, window: &WindowState) {
     // }
 }
 
+/// Decide whether to show a resize cursor depending on its position around the edges of the window.
 fn handle_resize_borders(
     window: &WindowState,
     gui_window_rect: egui::Rect,
