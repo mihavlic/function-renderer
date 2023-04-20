@@ -668,7 +668,7 @@ impl Renderer {
             return SmallVec::new();
         }
 
-        let submissions = device.access_multiple(|staging| {
+        let submissions = device.write_multiple(|staging| {
             let mut submissions = SmallVec::new();
             for (image, is_rgba, blits) in output_blits {
                 let image = self.texture_images.get(&image).unwrap();

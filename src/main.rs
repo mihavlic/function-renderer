@@ -296,7 +296,7 @@ pub fn main() {
 
                                 // see the comment about saving the mesh at the start of the event loop
                                 if save_requested {
-                                    device.access_multiple(|manager| {
+                                    device.write_multiple(|manager| {
                                         let mut read = |buf: &object::Buffer, kind: fn(*const u8, usize) -> ApplicationEvent| {
                                             let size = buf.get_create_info().size as usize;
                                             let tx = tx.clone();
