@@ -560,7 +560,7 @@ fn parse_monoop(parser: &mut Parser) -> Result<Box<Expression>> {
     }
 }
 
-/// Parses a full expression such as `1 + 1`. This fuction is recursive to implement operator precedence.
+/// Parses a full expression such as `1 + 1`. This function is recursive to implement operator precedence.
 fn parse_expr(parser: &mut Parser, precedence: u8) -> Result<Box<Expression>> {
     let mut left = parse_monoop(parser)?;
 

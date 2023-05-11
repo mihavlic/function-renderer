@@ -27,7 +27,7 @@ image = "0.24.4"
 # utility algorithm for slicing vectors of values according to some shared key 
 slice-group-by = "0.3.0"
 
-# file mofification notification library
+# file change notification library
 notify = "5.1.0"
 # pretty commandline line "editor"
 rustyline = "10.0.0"

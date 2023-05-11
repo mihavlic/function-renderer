@@ -207,7 +207,7 @@ impl Tape {
                 return *self
                     .expressions
                     .get(&SsaExpression::Builtin(*b))
-                    .expect("Builtins must be predefined throught add_extenal()");
+                    .expect("Builtins must be predefined through add_external()");
             }
             super::Expression::Constant(c) => {
                 let value = match c {

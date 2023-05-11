@@ -25,7 +25,7 @@ use graph::object::{self, PipelineStage, SwapchainCreateInfo};
 use graph::smallvec::{smallvec, SmallVec};
 use graph::tracing::tracing_subscriber::install_tracing_subscriber;
 use graph::vma;
-use gui::{GuiControl, GuiOuput, WindowState};
+use gui::{GuiControl, GuiOutput, WindowState};
 use hotreaload::{PollResult, ShaderModules, ShaderModulesConfig};
 use pumice::{util::ApiLoadConfig, vk};
 use recomputation::RecomputationCache;
@@ -58,7 +58,7 @@ enum ApplicationEvent {
 
 /// The application state which is updated by [`main()`] and is read by some of the graph render passes.
 pub struct ApplicationState {
-    /// The current camera tranform of the *camera*. The model to world transform is the inverse of this.
+    /// The current camera transform of the *camera*. The model to world transform is the inverse of this.
     camera: Transform<RightHanded>,
     /// Egui primitives
     primitives: Vec<egui::ClippedPrimitive>,
@@ -182,7 +182,7 @@ pub fn main() {
             window_state.process_event(event);
             let window = window_state.window();
 
-            // handle the mesh export - since reading gpu memory is inherently asynchronous, the current abtractions
+            // handle the mesh export - since reading gpu memory is inherently asynchronous, the current abstractions
             // are given a callback to call when the memory is ready, this callback copies the memory and sends it here
             // since the mesh is composed of both a vertex and an index buffer, we need to wait for both to complete
             // only then can we continue saving the mesh to disk
@@ -275,7 +275,7 @@ pub fn main() {
                                     exit = true;
                                 }
 
-                                let GuiOuput {
+                                let GuiOutput {
                                     inner_size: new_inner_size,
                                     drag_delta,
                                     save_requested,
@@ -296,7 +296,7 @@ pub fn main() {
 
                                 // see the comment about saving the mesh at the start of the event loop
                                 if save_requested {
-                                    device.access_multiple(|manager| {
+                                    device.write_multiple(|manager| {
                                         let mut read = |buf: &object::Buffer, kind: fn(*const u8, usize) -> ApplicationEvent| {
                                             let size = buf.get_create_info().size as usize;
                                             let tx = tx.clone();
@@ -353,7 +353,7 @@ pub fn main() {
                                     }
                                 }
 
-                                // sleep the remainder of 16 miliseconds to achieve 60 Hz
+                                // sleep the remainder of 16 milliseconds to achieve 60 Hz
                                 if let Some(remaining) =
                                     Duration::from_millis(1000 / 60).checked_sub(prev.elapsed())
                                 {

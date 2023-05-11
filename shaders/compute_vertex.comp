@@ -21,7 +21,7 @@ const uvec3[] axes = {
 float plane_distance(vec3 normal, vec3 intersection, vec3 point) {
     // ax + by + cz - q = 0
     float q = dot(normal, intersection);
-    // normal is expected to be notmalized
+    // normal is expected to be normalized
     return dot(normal, point) - q;
 }
 

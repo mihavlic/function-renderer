@@ -1,7 +1,7 @@
 //! Watches and reloads shaders.
 //!
 //! This module implements all of the shader reloading logic. A [`notify::Watcher`] is used to watch files on disk and invalidates all that changes.
-//! Additionally, this also receives commands from the gui abount changes to the function, processes it, and templates into the shaders.
+//! Additionally, this also receives commands from the gui about changes to the function, processes it, and templates into the shaders.
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -150,8 +150,8 @@ impl ShaderModules {
                 .open(&path)
                 .unwrap();
 
-            // we manually create the history file since we need to append an entry immediatelly after a line is read
-            // since this thread otherwise blocks on stdin the rest of the time and the main thread ending will terminate it immediatelly
+            // we manually create the history file since we need to append an entry immediately after a line is read
+            // since this thread otherwise blocks on stdin the rest of the time and the main thread ending will terminate it immediately
             let size = history_file.seek(io::SeekFrom::End(0)).unwrap();
             if size == 0 {
                 writeln!(history_file, "#V2").unwrap();

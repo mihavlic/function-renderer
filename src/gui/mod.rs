@@ -131,7 +131,7 @@ impl WindowState {
         self.inject_pointer_release();
     }
     fn inject_pointer_release(&self) {
-        // we immediatelly inject a mouse release event since at least on wayland we
+        // we immediately inject a mouse release event since at least on wayland we
         // never receive it after beginning a drag?
         let device_id = self.inner_mut().last_mouse_device.unwrap();
         self.process_event(winit::event::Event::WindowEvent {

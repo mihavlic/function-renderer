@@ -74,7 +74,7 @@ impl CenterControl {
 }
 
 /// The output of running the Gui.
-pub struct GuiOuput {
+pub struct GuiOutput {
     /// Size of the function viewport where the function will be rendered.
     pub inner_size: [u32; 2],
     /// Drag delta inside the viewport.
@@ -137,7 +137,7 @@ impl GuiControl {
         }
     }
     /// Run the ui and update the [`ApplicationState`].
-    pub fn ui(&mut self, window: &WindowState) -> GuiOuput {
+    pub fn ui(&mut self, window: &WindowState) -> GuiOutput {
         let mut new_index = None;
         let mut size = None;
         let mut drag = egui::Vec2::ZERO;
@@ -326,7 +326,7 @@ impl GuiControl {
         let size = size.unwrap().size();
         let size = [size.x.round() as u32, size.y.round() as u32];
 
-        GuiOuput {
+        GuiOutput {
             inner_size: size,
             drag_delta: drag,
             save_requested,
