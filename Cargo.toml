@@ -19,9 +19,9 @@ pumice-vma = {git = "https://github.com/mihavlic/pumice-vma.git", features = ["V
 graph = {git = "https://github.com/mihavlic/vulkan-engine.git"}
 
 # window and gui
-winit = {version = "0.28.1", default-features = false, features = ["x11", "wayland"]}
+winit = {version = "0.28.1", default-features = false, features = ["x11", "wayland", "wayland-dlopen"]}
 egui = "0.21.0"
-egui-winit = "0.21.1"
+egui-winit = {version = "0.21.1", default-features = false, features = ["clipboard", "links", "wayland"]}
 image = "0.24.4"
 
 # utility algorithm for slicing vectors of values according to some shared key 
