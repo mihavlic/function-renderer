@@ -79,6 +79,7 @@ struct DensityFunctionData {
 pub struct ShaderModules {
     /// Whether to force the edges of the function volume positive to make the resulting shape always solid.
     thickness: bool,
+    invert: bool,
     density_function: Option<DensityFunctionData>,
     modules: HashMap<PathBuf, MetaModuleEntry>,
     simple_files: HashMap<PathBuf, SimpleFileEntry>,
@@ -105,11 +106,7 @@ pub enum ShaderModulesConfig<'a> {
 }
 
 impl ShaderModules {
-    pub fn new(
-        config: ShaderModulesConfig,
-        thickness: bool,
-        includes: &[(&str, MaybeFile)],
-    ) -> Self {
+    pub fn new(config: ShaderModulesConfig, solid: bool, includes: &[(&str, MaybeFile)]) -> Self {
         let (sender, receiver) = mpsc::channel();
 
         let sender_copy = sender.clone();
@@ -178,7 +175,8 @@ impl ShaderModules {
         };
 
         let mut s = Self {
-            thickness,
+            thickness: solid,
+            invert: false,
             density_function: None,
             modules: Default::default(),
             simple_files: Default::default(),
@@ -210,7 +208,7 @@ impl ShaderModules {
         self.sender.clone()
     }
     fn density_fn_changed(&mut self, new: String) -> parse::Result<()> {
-        let (function, gradient) = math_into_glsl(&new, self.thickness)?;
+        let (function, gradient) = math_into_glsl(&new, self.thickness, self.invert)?;
         self.density_function = Some(DensityFunctionData {
             original: new,
             function,
@@ -256,6 +254,15 @@ impl ShaderModules {
                     AsyncEvent::GenerateThickness(thickness) => {
                         if thickness != self.thickness {
                             self.thickness = thickness;
+                            status = PollResult::Recreate;
+                            if let Some(data) = &self.density_function {
+                                new_density_function = Some(data.original.to_owned());
+                            }
+                        }
+                    }
+                    AsyncEvent::Invert(invert) => {
+                        if invert != self.invert {
+                            self.invert = invert;
                             status = PollResult::Recreate;
                             if let Some(data) = &self.density_function {
                                 new_density_function = Some(data.original.to_owned());
@@ -423,6 +430,7 @@ pub enum AsyncEvent {
     FilesChanged(Vec<PathBuf>),
     NewFunction(String),
     GenerateThickness(bool),
+    Invert(bool),
     Exit,
 }
 

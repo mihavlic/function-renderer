@@ -99,7 +99,7 @@ pub fn main() {
 
         // create the window
         let window = WindowBuilder::new()
-            .with_inner_size(winit::dpi::LogicalSize::new(512.0f32, 512.0f32))
+            .with_inner_size(winit::dpi::LogicalSize::new(1024.0f32, 1024.0f32))
             .with_decorations(false)
             .with_transparent(true)
             .build(&event_loop)
@@ -169,6 +169,7 @@ pub fn main() {
                 "8*sin(sqrt(x^2 + y^2) / 2pi) - z",
                 "-(e^sqrt((x*x + y*y)) + z*100000)",
                 "128/sqrt(xx + yy) - z",
+                "0.0",
             ],
         );
 

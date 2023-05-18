@@ -28,7 +28,8 @@ pub fn icon_text(icon: char, size: f32) -> egui::RichText {
 /// State of the popup window which controls the viewed function interval.
 #[derive(Default)]
 struct CenterControl {
-    density: bool,
+    solid: bool,
+    invert: bool,
     center: Vec3,
     half: f32,
 }
@@ -63,8 +64,11 @@ impl CenterControl {
                 }
                 ui.end_row();
             });
-        if ui.checkbox(&mut self.density, "thickness").changed() {
-            _ = sender.send(AsyncEvent::GenerateThickness(self.density));
+        if ui.checkbox(&mut self.solid, "solid").changed() {
+            _ = sender.send(AsyncEvent::GenerateThickness(self.solid));
+        }
+        if ui.checkbox(&mut self.invert, "invert").changed() {
+            _ = sender.send(AsyncEvent::Invert(self.invert));
         }
     }
 
@@ -131,7 +135,8 @@ impl GuiControl {
             control: CenterControl {
                 center: Vec3::new(0.0, 0.0, 0.0),
                 half: 16.0,
-                density: true,
+                solid: true,
+                invert: false,
             },
             open_settings: false,
         }

@@ -12,7 +12,7 @@ pub const MIN_MARGIN: f32 = 0.8;
 pub const MAX_MARGIN: f32 = 2.5;
 
 #[rustfmt::skip]
-pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, String)> {
+pub fn math_into_glsl(expr: &str, solid: bool, invert: bool) -> parser::Result<(String, String)> {
     let mut tape = Tape::new();
     
     let x = tape.add(SsaExpression::Builtin(BuiltingVariable::X));
@@ -27,12 +27,12 @@ pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, St
     let min_margin = MIN_MARGIN / 63.0;
     let max_margin = 1.0 - MAX_MARGIN / 63.0;
 
-    let density = {
+    let mut density = {
         let expr = parse_math(expr)?;
         tape.add_ast(&expr)
     };
     
-    let last = if thickness {
+    let last = if solid {
         let box_sdf = {
             let expr = format!("
                 max(
@@ -47,7 +47,9 @@ pub fn math_into_glsl(expr: &str, thickness: bool) -> parser::Result<(String, St
             tape.add_ast(&expr)
         };
 
-        let density = tape.add(SsaExpression::Unary { op: UnaryOperation::Neg, child: density });
+        if invert {
+            density = tape.add(SsaExpression::Unary { op: UnaryOperation::Neg, child: density });
+        }
 
         // we want to apply the box sdf only where it's positive - ie. outside the box (there is some
         // conservative bias) otherwise the interpolated position may get \"under\" the implicit surface
