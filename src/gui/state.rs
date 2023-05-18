@@ -21,6 +21,15 @@ pub fn icon_button(ui: &mut egui::Ui, icon: char) -> egui::Response {
         .ui(ui)
 }
 
+pub fn icon_button_enabled(ui: &mut egui::Ui, enabled: bool, icon: char) -> egui::Response {
+    let mut label = egui::Label::new(icon_text(icon, 12.5));
+    if enabled {
+        label = label.sense(egui::Sense::click());
+    }
+
+    label.ui(ui)
+}
+
 pub fn icon_text(icon: char, size: f32) -> egui::RichText {
     egui::RichText::new(icon).font(egui::FontId::new(size, egui_icon_font_family()))
 }
@@ -225,11 +234,15 @@ impl GuiControl {
                                     }
                                 }
                             }
-                            if icon_button(ui, icons::LEFT).clicked() {
-                                new_index = self.history_index.checked_sub(1);
+                            let prev = self.history_index.checked_sub(1);
+                            let next = self.history_index.checked_add(1).unwrap();
+                            if icon_button_enabled(ui, prev.is_some(), icons::LEFT).clicked() {
+                                new_index = prev;
                             }
-                            if icon_button(ui, icons::RIGHT).clicked() {
-                                new_index = self.history_index.checked_add(1);
+                            if icon_button_enabled(ui, next < self.history.len(), icons::RIGHT)
+                                .clicked()
+                            {
+                                new_index = Some(next);
                             }
                         },
                     );

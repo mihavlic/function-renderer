@@ -102,6 +102,7 @@ pub fn main() {
             .with_inner_size(winit::dpi::LogicalSize::new(1024.0f32, 1024.0f32))
             .with_decorations(false)
             .with_transparent(true)
+            .with_maximized(true)
             .build(&event_loop)
             .unwrap();
 
@@ -160,15 +161,15 @@ pub fn main() {
             app_data.clone(),
             // prefill with some initial history
             &[
-                "sin(2sqrt(x^2+y^2+z^2)/pi)",
-                "2000/(x y) - z + 15",
-                "y - z",
-                "sin(x)",
-                "cos(abs(x)) + cos(abs(y)) + cos(abs(z)) - cos(x^2+y^2+z^2)",
-                "|x| + |y| - z",
-                "8*sin(sqrt(x^2 + y^2) / 2pi) - z",
-                "-(e^sqrt((x*x + y*y)) + z*100000)",
-                "128/sqrt(xx + yy) - z",
+                // "y - z",
+                // "sin(x)",
+                // "cos(abs(x)) + cos(abs(y)) + cos(abs(z)) - cos(x^2+y^2+z^2)",
+                // "|x| + |y| - z",
+                // "-(e^sqrt((x*x + y*y)) + z*100000)",
+                "z - 8*sin(sqrt(x^2 + y^2) / 2pi)",
+                "z - 128/sqrt(xx + yy)",
+                "z - 2000/(x y)",
+                "-sin(2sqrt(x^2+y^2+z^2)/pi)",
                 "0.0",
             ],
         );
