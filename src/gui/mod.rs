@@ -55,6 +55,8 @@ struct InnerWindowState {
     mouse_buttons: MouseState,
     /// Handles the integration between egui and winit.
     egui_winit: egui_winit::State,
+    /// Overrides the OS-provided scaling
+    override_scaling: Option<f32>,
 }
 
 /// The state of the winit window and egui.
@@ -66,7 +68,11 @@ pub struct WindowState {
 }
 
 impl WindowState {
-    pub fn new(window: Window, event_loop: &winit::event_loop::EventLoopWindowTarget<()>) -> Self {
+    pub fn new(
+        window: Window,
+        override_scaling: Option<f32>,
+        event_loop: &winit::event_loop::EventLoopWindowTarget<()>,
+    ) -> Self {
         let egui = egui::Context::default();
         egui.tessellation_options_mut(|o| {
             // we're rendering things with msaa, this is not needed?
@@ -76,6 +82,11 @@ impl WindowState {
         let mut egui_winit = egui_winit::State::new(event_loop);
         egui_winit.set_max_texture_side(8192);
 
+        if let Some(scaling) = override_scaling {
+            egui_winit.set_pixels_per_point(scaling);
+            egui.set_pixels_per_point(scaling);
+        }
+
         Self {
             window,
             should_exit: Default::default(),
@@ -84,6 +95,7 @@ impl WindowState {
                 collected_events: Vec::new(),
                 last_mouse_device: None,
                 mouse_buttons: MouseState::default(),
+                override_scaling,
                 egui_winit,
             }),
         }
@@ -100,7 +112,9 @@ impl WindowState {
     }
 
     pub fn pixels_per_point(&self) -> f32 {
-        self.egui.pixels_per_point()
+        self.inner_mut()
+            .override_scaling
+            .unwrap_or_else(|| self.egui.pixels_per_point())
     }
     pub fn mouse_state(&self) -> MouseState {
         self.inner_mut().mouse_buttons
@@ -163,6 +177,12 @@ impl WindowState {
                         inner.last_mouse_device = Some(device_id);
                         inner.mouse_buttons.update(button, state);
                     }
+                    &winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                        // preserve the override
+                        if inner.override_scaling.is_some() {
+                            return;
+                        }
+                    }
                     _ => {}
                 }
 
@@ -181,6 +201,10 @@ impl WindowState {
     pub fn gui_frame<R, F: FnOnce(&WindowState) -> R>(&self, fun: F) -> GuiFrameOutput<R> {
         let mut inner = self.inner_mut();
 
+        if let Some(scaling) = inner.override_scaling {
+            inner.egui_winit.set_pixels_per_point(scaling);
+            self.egui.set_pixels_per_point(scaling);
+        }
         let new_input = inner.egui_winit.take_egui_input(&self.window);
 
         drop(inner);

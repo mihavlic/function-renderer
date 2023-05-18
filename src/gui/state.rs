@@ -129,7 +129,7 @@ impl GuiControl {
             history_index: initial_history.len().saturating_sub(1),
             state,
             control: CenterControl {
-                center: Vec3::new(0.0, 0.0, 16.0),
+                center: Vec3::new(0.0, 0.0, 0.0),
                 half: 16.0,
                 density: true,
             },
@@ -323,7 +323,7 @@ impl GuiControl {
             frame.rect_max = scaled_max;
         }
 
-        let size = size.unwrap().size();
+        let size = size.unwrap().size() * window.pixels_per_point();
         let size = [size.x.round() as u32, size.y.round() as u32];
 
         GuiOutput {

@@ -33,6 +33,7 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::io::BufWriter;
+use std::println;
 use std::sync::mpsc::{self};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -107,7 +108,15 @@ pub fn main() {
         // create the vulkan window object and its application state
         let (surface, device, queue) = make_device(&window);
         let swapchain = make_swapchain(&window, surface, &device);
-        let window_state = WindowState::new(window, &event_loop);
+        let override_scaling = std::env::var("SCALING_OVERRIDE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok());
+
+        if let Some(scaling) = override_scaling {
+            println!("Overriding scaling: {scaling}");
+        }
+
+        let window_state = WindowState::new(window, override_scaling, &event_loop);
 
         // this object tracks and reloads shader modules
         let modules = ShaderModules::new(
