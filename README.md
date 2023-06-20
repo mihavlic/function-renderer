@@ -1,9 +1,11 @@
 # Function Renderer
-This is an implementation of the dual contouring algorithm in Vulkan compute shaders. It includes an Egui graphical interface for editing and viewing the function. It can also export .stl files.
+This project implements the dual contouring algorithm in Vulkan compute shaders. It includes an Egui interface for manipulating the function with the ability to export its mesh as an .stl file.
+
 ![Screenshot of application](screenshot.png)
 
 # Building
 You need somewhat recent graphics drivers, shaderc, Rust, and a C++ compiler
+
 ## Archlinux
 ```sh
 sudo pacman -S shaderc rust gcc
